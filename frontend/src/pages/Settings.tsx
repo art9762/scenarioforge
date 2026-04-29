@@ -1,0 +1,108 @@
+import { useState, useEffect } from 'react'
+import type { DepthMode } from '../types'
+import { api } from '../api/client'
+
+const AGENTS = ['director', 'screenwriter', 'visual_director', 'copywriter', 'editor']
+const AGENT_LABELS: Record<string, string> = {
+  director: 'Режиссёр',
+  screenwriter: 'Сценарист',
+  visual_director: 'Визуал-директор',
+  copywriter: 'Копирайтер',
+  editor: 'Редактор',
+}
+
+export default function Settings() {
+  const [depth, setDepth] = useState<DepthMode>('standard')
+  const [models, setModels] = useState<string[]>([])
+  const [overrides, setOverrides] = useState<Record<string, string>>({})
+  const [equipment, setEquipment] = useState({
+    camera: '',
+    lenses: '',
+    lighting: '',
+    audio: '',
+    locations: '',
+    special: '',
+  })
+
+  useEffect(() => {
+    api.getModels().then(setModels).catch(() => setModels(['claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-6', 'gpt-5.2']))
+    // Load saved settings from localStorage
+    const saved = localStorage.getItem('sf_settings')
+    if (saved) {
+      const s = JSON.parse(saved)
+      if (s.depth) setDepth(s.depth)
+      if (s.overrides) setOverrides(s.overrides)
+      if (s.equipment) setEquipment(s.equipment)
+    }
+  }, [])
+
+  const save = () => {
+    localStorage.setItem('sf_settings', JSON.stringify({ depth, overrides, equipment }))
+    alert('Настройки сохранены')
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto">
+      <h1 className="text-2xl font-bold mb-6">Настройки</h1>
+
+      {/* Depth mode */}
+      <section className="mb-8">
+        <h2 className="text-lg font-medium mb-3">Режим глубины по умолчанию</h2>
+        <div className="flex gap-3">
+          {(['fast', 'standard', 'deep'] as DepthMode[]).map((d) => (
+            <button
+              key={d}
+              onClick={() => setDepth(d)}
+              className={`px-4 py-2 rounded border text-sm ${depth === d ? 'border-accent text-accent bg-accent/10' : 'border-bg-tertiary text-text-secondary hover:border-accent-dim'}`}
+            >
+              {{ fast: '⚡ Быстро', standard: '🎯 Стандарт', deep: '🏆 Глубоко' }[d]}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {/* Model overrides */}
+      <section className="mb-8">
+        <h2 className="text-lg font-medium mb-3">Модели агентов</h2>
+        <div className="space-y-3">
+          {AGENTS.map((agent) => (
+            <div key={agent} className="flex items-center gap-3">
+              <span className="text-sm text-text-secondary w-40">{AGENT_LABELS[agent]}</span>
+              <select
+                value={overrides[agent] || ''}
+                onChange={(e) => setOverrides({ ...overrides, [agent]: e.target.value })}
+                className="flex-1 bg-bg-secondary border border-bg-tertiary rounded px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent"
+              >
+                <option value="">По умолчанию</option>
+                {models.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Equipment profile */}
+      <section className="mb-8">
+        <h2 className="text-lg font-medium mb-3">Профиль оборудования (по умолчанию)</h2>
+        <div className="grid grid-cols-2 gap-3">
+          {Object.entries(equipment).map(([key, val]) => (
+            <div key={key}>
+              <label className="block text-xs text-text-secondary mb-1">
+                {{ camera: 'Камера', lenses: 'Объективы', lighting: 'Свет', audio: 'Звук', locations: 'Локации', special: 'Спецсредства' }[key] || key}
+              </label>
+              <input
+                value={val}
+                onChange={(e) => setEquipment({ ...equipment, [key]: e.target.value })}
+                className="w-full bg-bg-secondary border border-bg-tertiary rounded px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent"
+              />
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <button onClick={save} className="bg-accent text-bg-primary px-6 py-3 rounded font-medium hover:opacity-90">
+        Сохранить настройки
+      </button>
+    </div>
+  )
+}

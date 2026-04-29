@@ -1,0 +1,56 @@
+import pytest
+from unittest.mock import AsyncMock, patch, MagicMock
+from backend.pipeline.orchestrator import PipelineOrchestrator, AGENTS
+from backend.models.project import Project, ProjectType, Equipment, ProjectStatus
+
+
+@pytest.fixture
+def sample_project():
+    return Project(
+        idea="Короткометражка о роботе, который учится любить",
+        type=ProjectType.short_film,
+        equipment=Equipment(camera="Sony A7IV", lenses="35mm f/1.4"),
+        depth_mode="fast",
+        briefing_questions=["Какой жанр?"],
+        briefing_answers=["Sci-fi драма"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_briefing(sample_project):
+    orch = PipelineOrchestrator()
+    with patch("backend.pipeline.orchestrator.director") as mock_dir:
+        mock_dir.run = AsyncMock(return_value="1. Какой жанр?\n2. Какой хронометраж?\n3. Есть ли референсы?")
+        questions = await orch.generate_briefing(sample_project)
+        assert len(questions) == 3
+        assert "жанр" in questions[0].lower()
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_fast(sample_project):
+    orch = PipelineOrchestrator()
+    with patch("backend.pipeline.orchestrator.storage") as mock_storage:
+        mock_storage.save_project = AsyncMock()
+        with patch.object(AGENTS["director"], "run", new=AsyncMock(return_value="Director output")):
+            with patch.object(AGENTS["screenwriter"], "run", new=AsyncMock(return_value="# Final Scenario")):
+                result = await orch.run_pipeline(sample_project)
+                assert result == "# Final Scenario"
+                assert sample_project.status == ProjectStatus.completed
+
+
+@pytest.mark.asyncio
+async def test_stop_pipeline(sample_project):
+    orch = PipelineOrchestrator()
+
+    async def stop_after_first_call(ctx, model=None):
+        orch.stop(sample_project.id)
+        return "director output"
+
+    with patch("backend.pipeline.orchestrator.storage") as mock_storage:
+        mock_storage.save_project = AsyncMock()
+        with patch.object(AGENTS["director"], "run", new=stop_after_first_call):
+            with patch.object(AGENTS["screenwriter"], "run", new=AsyncMock(return_value="should not reach")):
+                result = await orch.run_pipeline(sample_project)
+                # Should stop before screenwriter runs
+                assert result == "director output"
+                AGENTS["screenwriter"].run.assert_not_called()
