@@ -35,11 +35,23 @@ export default function AgentChat() {
 
   useEffect(() => {
     if (!id || !currentAgent) return
-    setLoading(true)
-    api.getChatHistory(id, currentAgent)
-      .then((data) => setMessages(data.messages))
-      .catch(() => setMessages([]))
-      .finally(() => setLoading(false))
+    let cancelled = false
+    const fetchHistory = async () => {
+      try {
+        const data = await api.getChatHistory(id, currentAgent)
+        if (!cancelled) {
+          setMessages(data.messages)
+          setLoading(false)
+        }
+      } catch {
+        if (!cancelled) {
+          setMessages([])
+          setLoading(false)
+        }
+      }
+    }
+    fetchHistory()
+    return () => { cancelled = true }
   }, [id, currentAgent])
 
   useEffect(() => {

@@ -1,5 +1,47 @@
 import type { Project, BriefingQuestion, PipelineStatus, Scenario, DepthMode, ModelConfig, AgentResult, Revision, ChatMessage } from '../types'
 
+interface AdminUser {
+  id: string
+  user_id: string
+  email: string
+  display_name: string
+  is_admin: boolean
+  is_active: boolean
+  credits: number
+  tier: string
+  created_at: string
+}
+
+interface InviteCode {
+  id: string
+  code: string
+  used: boolean
+  used_by: string | null
+  created_by: string
+  used_at: string | null
+  created_at: string
+}
+
+interface CreditCode {
+  id: string
+  code: string
+  amount: number
+  used: boolean
+  used_by: string | null
+  created_by: string
+  used_at: string | null
+  created_at: string
+}
+
+interface AdminStats {
+  users: number
+  projects: number
+  total_generations: number
+  invite_codes: { used: number; total: number }
+  credit_codes: { used: number; total: number }
+  tokens: { total: number; input: number; output: number }
+}
+
 const BASE = '/api'
 
 function getAuthHeaders(): Record<string, string> {
@@ -89,16 +131,16 @@ export const api = {
     request<{ credits: number; added: number }>('/auth/redeem', { method: 'POST', body: JSON.stringify({ code }) }),
 
   // Admin
-  adminListUsers: () => request<any[]>('/admin/users'),
+  adminListUsers: () => request<AdminUser[]>('/admin/users'),
   adminUpdateUser: (id: string, data: { credits?: number; is_active?: boolean; is_admin?: boolean }) =>
-    request<any>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    request<AdminUser>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   adminGenerateInviteCodes: (count: number) =>
     request<{ codes: string[] }>('/admin/invite-codes', { method: 'POST', body: JSON.stringify({ count }) }),
-  adminListInviteCodes: () => request<any[]>('/admin/invite-codes'),
+  adminListInviteCodes: () => request<InviteCode[]>('/admin/invite-codes'),
   adminGenerateCreditCodes: (count: number, amount: number) =>
-    request<{ codes: any[] }>('/admin/credit-codes', { method: 'POST', body: JSON.stringify({ count, amount }) }),
-  adminListCreditCodes: () => request<any[]>('/admin/credit-codes'),
-  adminGetStats: () => request<any>('/admin/stats'),
+    request<{ codes: CreditCode[] }>('/admin/credit-codes', { method: 'POST', body: JSON.stringify({ count, amount }) }),
+  adminListCreditCodes: () => request<CreditCode[]>('/admin/credit-codes'),
+  adminGetStats: () => request<AdminStats>('/admin/stats'),
 
   // SSE stream
   streamStatus: (id: string): EventSource => {

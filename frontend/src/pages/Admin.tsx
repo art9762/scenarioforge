@@ -24,22 +24,27 @@ interface CodeInfo {
   created_at: string
 }
 
+interface StatsInfo {
+  users: number
+  projects: number
+  total_generations: number
+  invite_codes: { used: number; total: number }
+  credit_codes: { used: number; total: number }
+  tokens: { total: number; input: number; output: number }
+}
+
 export default function Admin() {
   const [tab, setTab] = useState<Tab>('users')
   const [users, setUsers] = useState<UserInfo[]>([])
   const [inviteCodes, setInviteCodes] = useState<CodeInfo[]>([])
   const [creditCodes, setCreditCodes] = useState<CodeInfo[]>([])
-  const [stats, setStats] = useState<Record<string, unknown> | null>(null)
+  const [stats, setStats] = useState<StatsInfo | null>(null)
   const [inviteCount, setInviteCount] = useState(5)
   const [creditCount, setCreditCount] = useState(5)
   const [creditAmount, setCreditAmount] = useState(10)
   const [loading, setLoading] = useState(false)
   const [editUser, setEditUser] = useState<UserInfo | null>(null)
   const [editCredits, setEditCredits] = useState(0)
-
-  useEffect(() => {
-    loadData()
-  }, [])
 
   const loadData = async () => {
     try {
@@ -57,6 +62,10 @@ export default function Admin() {
       // ignore
     }
   }
+
+  useEffect(() => {
+    loadData() // eslint-disable-line react-hooks/set-state-in-effect
+  }, [])
 
   const generateInvites = async () => {
     setLoading(true)
@@ -104,12 +113,12 @@ export default function Admin() {
 
       {stats && (
         <div className="flex flex-wrap gap-4 mb-6 text-sm text-text-secondary">
-          <span>Юзеров: {(stats as any).users}</span>
-          <span>Проектов: {(stats as any).projects}</span>
-          <span>Генераций: {(stats as any).total_generations}</span>
-          <span>Инвайтов: {(stats as any).invite_codes?.used}/{(stats as any).invite_codes?.total}</span>
-          <span>Кредитов: {(stats as any).credit_codes?.used}/{(stats as any).credit_codes?.total}</span>
-          <span>Токены: {((stats as any).tokens?.total || 0).toLocaleString()} (вх: {((stats as any).tokens?.input || 0).toLocaleString()}, вых: {((stats as any).tokens?.output || 0).toLocaleString()})</span>
+          <span>Юзеров: {stats.users}</span>
+          <span>Проектов: {stats.projects}</span>
+          <span>Генераций: {stats.total_generations}</span>
+          <span>Инвайтов: {stats.invite_codes?.used}/{stats.invite_codes?.total}</span>
+          <span>Кредитов: {stats.credit_codes?.used}/{stats.credit_codes?.total}</span>
+          <span>Токены: {(stats.tokens?.total || 0).toLocaleString()} (вх: {(stats.tokens?.input || 0).toLocaleString()}, вых: {(stats.tokens?.output || 0).toLocaleString()})</span>
         </div>
       )}
 
