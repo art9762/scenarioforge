@@ -3,19 +3,17 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.jwt import create_access_token, create_refresh_token, verify_token
 from backend.auth.deps import get_current_user
+from backend.auth.passwords import hash_password, verify_password
 from backend.db.models import User, InviteCode, CreditCode
 from backend.db.session import get_db
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # --- Request/Response schemas ---
@@ -62,7 +60,7 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
     user = User(
         email=data.email,
-        hashed_password=pwd_context.hash(data.password),
+        hashed_password=hash_password(data.password),
         display_name=data.display_name or data.email.split("@")[0],
         invited_by=invite.created_by,
     )
@@ -87,7 +85,7 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
 
-    if not user or not pwd_context.verify(data.password, user.hashed_password):
+    if not user or not verify_password(data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if not user.is_active:

@@ -46,17 +46,16 @@ async def lifespan(app: FastAPI):
 
 async def _ensure_admin():
     """Create default admin user on first startup if no users exist."""
-    from passlib.context import CryptContext
     from sqlalchemy import select, func
+    from backend.auth.passwords import hash_password
     from backend.db.models import User
 
-    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
     async for db in get_db():
         count = (await db.execute(select(func.count(User.id)))).scalar()
         if count == 0:
             admin = User(
                 email=settings.admin_email,
-                hashed_password=pwd_context.hash(settings.admin_password),
+                hashed_password=hash_password(settings.admin_password),
                 display_name="Admin",
                 is_admin=True,
                 credits=999999,
