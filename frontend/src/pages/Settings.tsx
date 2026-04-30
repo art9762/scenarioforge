@@ -2,6 +2,12 @@ import { useState, useEffect } from 'react'
 import type { DepthMode, EquipmentProfile } from '../types'
 import { api } from '../api/client'
 
+interface ModelInfo {
+  id: string
+  provider: string
+  name: string
+}
+
 const AGENTS = ['director', 'screenwriter', 'visual_director', 'copywriter', 'editor']
 const AGENT_LABELS: Record<string, string> = {
   director: 'Режиссёр',
@@ -54,12 +60,23 @@ function loadSavedSettings(): SavedSettings {
 export default function Settings() {
   const [savedSettings] = useState(loadSavedSettings)
   const [depth, setDepth] = useState<DepthMode>(savedSettings.depth)
-  const [models, setModels] = useState<string[]>([])
+  const [models, setModels] = useState<ModelInfo[]>([])
   const [overrides, setOverrides] = useState<Record<string, string>>(savedSettings.overrides)
   const [equipment, setEquipment] = useState<EquipmentProfile>(savedSettings.equipment)
 
   useEffect(() => {
-    api.getModels().then(setModels).catch(() => setModels(['claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-6', 'gpt-5.2']))
+    api.getModels()
+      .then((data: unknown) => {
+        // API returns array of {id, provider, name} objects
+        const arr = data as ModelInfo[]
+        setModels(arr)
+      })
+      .catch(() => setModels([
+        { id: 'claude-haiku-4-5', provider: 'aurora', name: 'Claude Haiku 4.5' },
+        { id: 'claude-sonnet-4-6', provider: 'aurora', name: 'Claude Sonnet 4.6' },
+        { id: 'claude-opus-4-6', provider: 'aurora', name: 'Claude Opus 4.6' },
+        { id: 'gpt-5.2', provider: 'orion', name: 'GPT 5.2' },
+      ]))
   }, [])
 
   const save = () => {
@@ -100,7 +117,7 @@ export default function Settings() {
                 className="flex-1 bg-bg-secondary border border-bg-tertiary rounded px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent"
               >
                 <option value="">По умолчанию</option>
-                {models.map((m) => <option key={m} value={m}>{m}</option>)}
+                {models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
               </select>
             </div>
           ))}

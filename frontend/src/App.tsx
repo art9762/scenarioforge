@@ -1,5 +1,6 @@
 import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
+import ErrorBoundary from './components/ErrorBoundary'
 import ProjectList from './pages/ProjectList'
 import NewProject from './pages/NewProject'
 import Briefing from './pages/Briefing'
@@ -18,7 +19,7 @@ function App() {
         <Route path="projects/:id/generation" element={<Generation />} />
         <Route path="projects/:id/scenario" element={<ScenarioView />} />
         <Route path="projects/:id/edit" element={<ScenarioEditor />} />
-        <Route path="settings" element={<Settings />} />
+        <Route path="settings" element={<ErrorBoundary><Settings /></ErrorBoundary>} />
       </Route>
     </Routes>
   )

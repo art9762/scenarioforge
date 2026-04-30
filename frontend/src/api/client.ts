@@ -40,6 +40,6 @@ export const api = {
   exportPdf: (id: string) => `${BASE}/projects/${id}/export/pdf`,
 
   // Config
-  getModels: () => request<string[]>('/config/models'),
+  getModels: () => request<{ id: string; provider: string; name: string }[]>('/config/models'),
   getDepthModes: () => request<Record<string, unknown>>('/config/depth-modes'),
 }
