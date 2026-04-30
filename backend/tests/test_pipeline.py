@@ -31,11 +31,16 @@ async def test_run_pipeline_fast(sample_project):
     orch = PipelineOrchestrator()
     with patch("backend.pipeline.orchestrator.storage") as mock_storage:
         mock_storage.save_project = AsyncMock()
+        mock_storage.save_agent_result = AsyncMock()
+        mock_storage.save_revision = AsyncMock()
         with patch.object(AGENTS["director"], "run", new=AsyncMock(return_value="Director output")):
             with patch.object(AGENTS["screenwriter"], "run", new=AsyncMock(return_value="# Final Scenario")):
                 result = await orch.run_pipeline(sample_project)
                 assert result == "# Final Scenario"
                 assert sample_project.status == ProjectStatus.completed
+                # Verify agent results and revisions were saved
+                assert mock_storage.save_agent_result.call_count == 2
+                assert mock_storage.save_revision.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -48,6 +53,8 @@ async def test_stop_pipeline(sample_project):
 
     with patch("backend.pipeline.orchestrator.storage") as mock_storage:
         mock_storage.save_project = AsyncMock()
+        mock_storage.save_agent_result = AsyncMock()
+        mock_storage.save_revision = AsyncMock()
         with patch.object(AGENTS["director"], "run", new=stop_after_first_call):
             with patch.object(AGENTS["screenwriter"], "run", new=AsyncMock(return_value="should not reach")):
                 result = await orch.run_pipeline(sample_project)

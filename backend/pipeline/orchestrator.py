@@ -84,6 +84,21 @@ class PipelineOrchestrator:
 
                 scenario = await agent.run(agent_context, model=model)
 
+                # Save per-agent intermediate result
+                await storage.save_agent_result(
+                    project_id=project.id,
+                    agent_name=agent_name,
+                    result=scenario,
+                    model=model,
+                )
+
+                # Save revision after each agent
+                await storage.save_revision(
+                    project_id=project.id,
+                    scenario=scenario,
+                    source=agent_name,
+                )
+
         project.scenario = scenario
         project.status = ProjectStatus.completed
         project.current_agent = None
@@ -97,6 +112,14 @@ class PipelineOrchestrator:
         agent = AGENTS.get(agent_name, editor)
         model = project.model_overrides.get(agent_name) or DEPTH_MODES[project.depth_mode]["default_models"].get(agent_name, "claude-sonnet-4-6")
 
+        # Save current scenario as revision before overwriting
+        if project.scenario:
+            await storage.save_revision(
+                project_id=project.id,
+                scenario=project.scenario,
+                source=f"before-revise-{agent_name}",
+            )
+
         context = f"""## Текущий сценарий:\n\n{project.scenario}\n\n## Запрос на ревизию:\n{instructions}"""
         if scene_number:
             context += f"\n\nФокус на сцене #{scene_number}."
@@ -105,6 +128,14 @@ class PipelineOrchestrator:
         project.scenario = result
         project.updated_at = datetime.now(timezone.utc)
         await storage.save_project(project)
+
+        # Save the revision result
+        await storage.save_revision(
+            project_id=project.id,
+            scenario=result,
+            source=f"revise-{agent_name}",
+        )
+
         return result
 
     def stop(self, project_id: str):

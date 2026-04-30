@@ -7,6 +7,7 @@ import Briefing from './pages/Briefing'
 import Generation from './pages/Generation'
 import ScenarioView from './pages/ScenarioView'
 import ScenarioEditor from './pages/ScenarioEditor'
+import AgentChat from './pages/AgentChat'
 import Settings from './pages/Settings'
 import TestModels from './pages/TestModels'
 
@@ -20,6 +21,7 @@ function App() {
         <Route path="projects/:id/generation" element={<Generation />} />
         <Route path="projects/:id/scenario" element={<ScenarioView />} />
         <Route path="projects/:id/edit" element={<ScenarioEditor />} />
+        <Route path="projects/:id/chat/:agent" element={<AgentChat />} />
         <Route path="settings" element={<ErrorBoundary><Settings /></ErrorBoundary>} />
         <Route path="test" element={<TestModels />} />
       </Route>

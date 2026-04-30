@@ -28,6 +28,8 @@ export interface PipelineStatus {
   current_agent?: string
   progress: number
   message?: string
+  completed_agents?: string[]
+  draft_preview?: string
 }
 
 export interface Scene {
@@ -60,4 +62,25 @@ export type DepthMode = 'fast' | 'standard' | 'deep'
 
 export interface ModelConfig {
   [agent: string]: string
+}
+
+export interface AgentResult {
+  agent: string
+  model: string
+  result: string
+  tokens: Record<string, number> | null
+  timestamp: string
+}
+
+export interface Revision {
+  filename: string
+  date: string
+  time: string
+  source: string
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  timestamp?: string
 }

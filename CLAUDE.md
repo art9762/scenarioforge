@@ -33,7 +33,7 @@ pytest tests/test_agents.py      # single test file
 pytest tests/test_api.py -k "test_name"  # single test
 ```
 
-Tests use `pytest-asyncio`. The `conftest.py` adds the project root to `sys.path`.
+Tests use `pytest-asyncio` (strict mode, configured in `backend/pytest.ini`). The `conftest.py` adds the project root to `sys.path`.
 
 ## Architecture
 
@@ -55,6 +55,9 @@ React 19 + Vite + Tailwind CSS 4 + React Router 7. Dark minimalist UI. API clien
 ### Export
 `backend/services/export.py` handles Markdown and PDF (WeasyPrint) export.
 
+### Test Mode
+`POST /api/test/models` sends a short ping to every model in `AVAILABLE_MODELS` concurrently and returns ok/fail, latency, and reply. Frontend page at `/test` (`frontend/src/pages/TestModels.tsx`).
+
 ## Environment
 
 Requires `.env` at project root (copy from `.env.example`). Key variable: `TRINITY_API_KEY`. The backend reads env via `pydantic-settings` in `backend/config.py`.
@@ -64,3 +67,5 @@ Requires `.env` at project root (copy from `.env.example`). Key variable: `TRINI
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/).
 - Backend is async Python (FastAPI). Frontend is TypeScript.
 - All Russian agent names in comments are intentional (Режиссёр, Сценарист, etc.).
+- Use `datetime.now(timezone.utc)` (not deprecated `utcnow()`).
+- Use pydantic `model_config = {...}` dict (not deprecated `class Config`).

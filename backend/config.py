@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     storage_dir: str = "./data"
     host: str = "0.0.0.0"
     port: int = 8000
+    auth_enabled: bool = False
+    jwt_secret: str = "dev-secret-change-me"
+    database_url: str = "sqlite+aiosqlite:///./data/scenarioforge.db"
 
     model_config = {"env_file": str(PROJECT_ROOT / ".env")}
 

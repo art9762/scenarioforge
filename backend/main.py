@@ -1,11 +1,14 @@
 import asyncio
+import json
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-from typing import AsyncGenerator
+from datetime import datetime, timezone
+from pydantic import BaseModel
+from typing import AsyncGenerator, Optional
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -18,16 +21,26 @@ from backend.models.project import (
 from backend.services.storage import storage
 from backend.services.export import export_service
 from backend.services.llm import llm_client
-from backend.pipeline.orchestrator import orchestrator
+from backend.pipeline.orchestrator import orchestrator, AGENTS
+from backend.db.session import init_db
+from backend.auth.routes import router as auth_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize database tables
+    await init_db()
+    # Auto-migrate legacy projects on startup
+    migrated = await storage.migrate_all_legacy()
+    if migrated:
+        print(f"Migrated {migrated} legacy projects to v2 storage format")
     yield
     await llm_client.close()
 
 
-app = FastAPI(title="ScenarioForge", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="ScenarioForge", version="2.0.0", lifespan=lifespan)
+
+app.include_router(auth_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -163,9 +176,159 @@ async def update_scenario(project_id: str, data: ScenarioUpdate):
     project = await storage.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    # Save revision before manual edit
+    if project.scenario:
+        await storage.save_revision(project.id, project.scenario, source="before-manual-edit")
     project.scenario = data.scenario
     await storage.save_project(project)
+    await storage.save_revision(project.id, data.scenario, source="manual-edit")
     return {"status": "updated"}
+
+
+# --- Agent results ---
+
+@app.get("/api/projects/{project_id}/agents")
+async def list_agent_results(project_id: str):
+    """List all agent intermediate results for a project."""
+    project = await storage.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    results = await storage.list_agent_results(project_id)
+    return {"results": results}
+
+
+@app.get("/api/projects/{project_id}/agents/{agent_name}")
+async def get_agent_result(project_id: str, agent_name: str):
+    """Get a specific agent's last result."""
+    project = await storage.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    result = await storage.get_agent_result(project_id, agent_name)
+    if not result:
+        raise HTTPException(status_code=404, detail="Agent result not found")
+    return result
+
+
+# --- Revision history ---
+
+@app.get("/api/projects/{project_id}/revisions")
+async def list_revisions(project_id: str):
+    """List all scenario revisions."""
+    project = await storage.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    revisions = await storage.list_revisions(project_id)
+    return {"revisions": revisions}
+
+
+@app.get("/api/projects/{project_id}/revisions/{filename}")
+async def get_revision(project_id: str, filename: str):
+    """Get a specific revision."""
+    project = await storage.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    content = await storage.get_revision(project_id, filename)
+    if content is None:
+        raise HTTPException(status_code=404, detail="Revision not found")
+    return {"filename": filename, "content": content}
+
+
+# --- Agent Chat ---
+
+class ChatMessage(BaseModel):
+    message: str
+    context_fragment: Optional[str] = None
+
+
+@app.post("/api/projects/{project_id}/chat/{agent_name}")
+async def chat_with_agent(project_id: str, agent_name: str, data: ChatMessage):
+    """Send a message to a specific agent in context of the project."""
+    project = await storage.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if agent_name not in AGENTS:
+        raise HTTPException(status_code=400, detail=f"Unknown agent: {agent_name}")
+
+    agent = AGENTS[agent_name]
+    model = project.model_overrides.get(agent_name) or DEPTH_MODES[project.depth_mode]["default_models"].get(agent_name, "claude-sonnet-4-6")
+
+    # Load chat history
+    history = await storage.get_chat_history(project_id, agent_name)
+
+    # Build context with scenario
+    scenario_ctx = ""
+    if project.scenario:
+        scenario_ctx = f"\n\n## Текущий сценарий:\n\n{project.scenario}"
+    if data.context_fragment:
+        scenario_ctx += f"\n\n## Выделенный фрагмент:\n\n{data.context_fragment}"
+
+    # Build messages for LLM
+    system_prompt = agent.system_prompt + scenario_ctx
+    messages = []
+    for msg in history[-20:]:  # Last 20 messages for context window
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": data.message})
+
+    # Call agent
+    response = await llm_client.generate(
+        model=model,
+        system_prompt=system_prompt,
+        messages=messages,
+        max_tokens=4096,
+    )
+
+    # Save to history
+    history.append({"role": "user", "content": data.message, "timestamp": datetime.now(timezone.utc).isoformat()})
+    history.append({"role": "assistant", "content": response, "timestamp": datetime.now(timezone.utc).isoformat()})
+    await storage.save_chat_history(project_id, agent_name, history)
+
+    return {"response": response, "agent": agent_name}
+
+
+@app.get("/api/projects/{project_id}/chat/{agent_name}")
+async def get_chat_history(project_id: str, agent_name: str):
+    """Get chat history with a specific agent."""
+    project = await storage.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    history = await storage.get_chat_history(project_id, agent_name)
+    return {"messages": history, "agent": agent_name}
+
+
+@app.delete("/api/projects/{project_id}/chat/{agent_name}")
+async def clear_chat_history(project_id: str, agent_name: str):
+    """Clear chat history with a specific agent."""
+    project = await storage.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await storage.save_chat_history(project_id, agent_name, [])
+    return {"status": "cleared"}
+
+
+# --- Ask about fragment ---
+
+class AskRequest(BaseModel):
+    question: str
+    fragment: str
+    agent: str = "director"
+
+
+@app.post("/api/projects/{project_id}/ask")
+async def ask_about_fragment(project_id: str, data: AskRequest):
+    """Ask a question about a specific scenario fragment."""
+    project = await storage.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if data.agent not in AGENTS:
+        raise HTTPException(status_code=400, detail=f"Unknown agent: {data.agent}")
+
+    agent = AGENTS[data.agent]
+    model = project.model_overrides.get(data.agent) or DEPTH_MODES[project.depth_mode]["default_models"].get(data.agent, "claude-sonnet-4-6")
+
+    context = f"""## Полный сценарий:\n\n{project.scenario}\n\n## Выделенный фрагмент:\n\n{data.fragment}\n\n## Вопрос:\n\n{data.question}"""
+
+    response = await agent.run(context, model=model)
+    return {"response": response, "agent": data.agent}
 
 
 # --- Export ---
@@ -204,25 +367,46 @@ async def export_pdf(project_id: str):
 
 @app.get("/api/projects/{project_id}/stream")
 async def stream_status(project_id: str):
-    """SSE endpoint for real-time pipeline status updates."""
+    """SSE endpoint for real-time pipeline status updates with agent drafts."""
     async def event_generator() -> AsyncGenerator[str, None]:
         prev_status = None
         prev_agent = None
+        prev_progress = None
         while True:
             project = await storage.get_project(project_id)
             if not project:
-                yield f"data: {{\"error\": \"not_found\"}}\n\n"
+                yield f"data: {json.dumps({'error': 'not_found'})}\n\n"
                 break
+
             status_data = {
                 "status": project.status.value,
                 "current_agent": project.current_agent,
                 "progress": project.progress,
             }
-            if project.status != prev_status or project.current_agent != prev_agent:
-                import json
-                yield f"data: {json.dumps(status_data)}\n\n"
+
+            # Include agent results summary
+            agent_results = await storage.list_agent_results(project_id)
+            status_data["completed_agents"] = [r["agent"] for r in agent_results]
+
+            # Include current draft if available
+            if agent_results:
+                latest = agent_results[-1]
+                # Send a truncated preview of the latest draft
+                draft_preview = latest.get("result", "")[:500]
+                status_data["draft_preview"] = draft_preview
+
+            changed = (
+                project.status != prev_status
+                or project.current_agent != prev_agent
+                or project.progress != prev_progress
+            )
+
+            if changed:
+                yield f"data: {json.dumps(status_data, ensure_ascii=False)}\n\n"
                 prev_status = project.status
                 prev_agent = project.current_agent
+                prev_progress = project.progress
+
             if project.status in (ProjectStatus.completed, ProjectStatus.error, ProjectStatus.stopped):
                 break
             await asyncio.sleep(1)
@@ -284,6 +468,15 @@ async def get_models():
 @app.get("/api/config/depth-modes")
 async def get_depth_modes():
     return DEPTH_MODES
+
+
+# --- Migration ---
+
+@app.post("/api/admin/migrate")
+async def migrate_legacy():
+    """Manually trigger migration of legacy projects."""
+    count = await storage.migrate_all_legacy()
+    return {"migrated": count}
 
 
 if __name__ == "__main__":
