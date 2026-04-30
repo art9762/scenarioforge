@@ -59,11 +59,13 @@ class PipelineOrchestrator:
         scenario = ""
         total_steps = len(agent_names) * iterations
         current_step = 0
+        total_input_tokens = 0
+        total_output_tokens = 0
 
         for iteration in range(iterations):
             for agent_name in agent_names:
                 if not self._running.get(project.id, False):
-                    return scenario or "Generation stopped."
+                    return (scenario or "Generation stopped."), total_input_tokens, total_output_tokens
 
                 agent = AGENTS[agent_name]
                 model = project.model_overrides.get(agent_name) or default_models[agent_name]
@@ -82,7 +84,10 @@ class PipelineOrchestrator:
                 if on_progress:
                     await on_progress(agent_name, project.progress)
 
-                scenario = await agent.run(agent_context, model=model)
+                resp = await agent.run_with_usage(agent_context, model=model)
+                scenario = resp.text
+                total_input_tokens += resp.input_tokens
+                total_output_tokens += resp.output_tokens
 
                 # Save per-agent intermediate result
                 await storage.save_agent_result(
@@ -105,7 +110,7 @@ class PipelineOrchestrator:
         project.progress = 1.0
         await storage.save_project(project)
         self._running.pop(project.id, None)
-        return scenario
+        return scenario, total_input_tokens, total_output_tokens
 
     async def revise(self, project: Project, agent_name: str, instructions: str, scene_number: Optional[int] = None) -> str:
         """Send a revision request to a specific agent."""

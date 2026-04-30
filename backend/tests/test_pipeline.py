@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from backend.pipeline.orchestrator import PipelineOrchestrator, AGENTS
 from backend.models.project import Project, ProjectType, Equipment, ProjectStatus
+from backend.services.llm import LLMResponse
 
 
 @pytest.fixture
@@ -14,6 +15,10 @@ def sample_project():
         briefing_questions=["Какой жанр?"],
         briefing_answers=["Sci-fi драма"],
     )
+
+
+def _make_resp(text: str) -> LLMResponse:
+    return LLMResponse(text=text, input_tokens=100, output_tokens=200)
 
 
 @pytest.mark.asyncio
@@ -33,12 +38,11 @@ async def test_run_pipeline_fast(sample_project):
         mock_storage.save_project = AsyncMock()
         mock_storage.save_agent_result = AsyncMock()
         mock_storage.save_revision = AsyncMock()
-        with patch.object(AGENTS["director"], "run", new=AsyncMock(return_value="Director output")):
-            with patch.object(AGENTS["screenwriter"], "run", new=AsyncMock(return_value="# Final Scenario")):
+        with patch.object(AGENTS["director"], "run_with_usage", new=AsyncMock(return_value=_make_resp("Director output"))):
+            with patch.object(AGENTS["screenwriter"], "run_with_usage", new=AsyncMock(return_value=_make_resp("# Final Scenario"))):
                 result = await orch.run_pipeline(sample_project)
-                assert result == "# Final Scenario"
+                assert result == ("# Final Scenario", 200, 400)
                 assert sample_project.status == ProjectStatus.completed
-                # Verify agent results and revisions were saved
                 assert mock_storage.save_agent_result.call_count == 2
                 assert mock_storage.save_revision.call_count == 2
 
@@ -49,15 +53,15 @@ async def test_stop_pipeline(sample_project):
 
     async def stop_after_first_call(ctx, model=None):
         orch.stop(sample_project.id)
-        return "director output"
+        return _make_resp("director output")
 
     with patch("backend.pipeline.orchestrator.storage") as mock_storage:
         mock_storage.save_project = AsyncMock()
         mock_storage.save_agent_result = AsyncMock()
         mock_storage.save_revision = AsyncMock()
-        with patch.object(AGENTS["director"], "run", new=stop_after_first_call):
-            with patch.object(AGENTS["screenwriter"], "run", new=AsyncMock(return_value="should not reach")):
+        with patch.object(AGENTS["director"], "run_with_usage", new=stop_after_first_call):
+            with patch.object(AGENTS["screenwriter"], "run_with_usage", new=AsyncMock(return_value=_make_resp("should not reach"))):
                 result = await orch.run_pipeline(sample_project)
-                # Should stop before screenwriter runs
-                assert result == "director output"
-                AGENTS["screenwriter"].run.assert_not_called()
+                # Should stop before screenwriter runs — returns scenario + token counts
+                assert result[0] == "director output"
+                AGENTS["screenwriter"].run_with_usage.assert_not_called()

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.jwt import create_access_token, create_refresh_token, verify_token
 from backend.auth.deps import get_current_user
-from backend.db.models import User
+from backend.db.models import User, InviteCode, CreditCode
 from backend.db.session import get_db
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -24,6 +24,7 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     display_name: str = ""
+    invite_code: str
 
 
 class LoginRequest(BaseModel):
@@ -48,6 +49,12 @@ class RefreshRequest(BaseModel):
 
 @router.post("/register", response_model=TokenResponse)
 async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
+    # Validate invite code
+    result = await db.execute(select(InviteCode).where(InviteCode.code == data.invite_code, InviteCode.used_by == None))
+    invite = result.scalar_one_or_none()
+    if not invite:
+        raise HTTPException(status_code=400, detail="Invalid or already used invite code")
+
     # Check if user already exists
     result = await db.execute(select(User).where(User.email == data.email))
     if result.scalar_one_or_none():
@@ -57,9 +64,14 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
         email=data.email,
         hashed_password=pwd_context.hash(data.password),
         display_name=data.display_name or data.email.split("@")[0],
+        invited_by=invite.created_by,
     )
     db.add(user)
     await db.flush()
+
+    # Mark invite as used
+    invite.used_by = user.id
+    invite.used_at = datetime.now(timezone.utc)
 
     return TokenResponse(
         access_token=create_access_token(user.id),
@@ -123,5 +135,34 @@ async def get_me(
         "display_name": user.display_name or "",
         "tier": user.tier,
         "is_active": user.is_active,
+        "is_admin": user.is_admin,
+        "credits": user.credits,
         "auth_enabled": True,
     }
+
+
+class RedeemRequest(BaseModel):
+    code: str
+
+
+@router.post("/redeem")
+async def redeem_credit_code(
+    data: RedeemRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Redeem a credit code to add credits to user balance."""
+    if user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    result = await db.execute(select(CreditCode).where(CreditCode.code == data.code, CreditCode.used_by == None))
+    credit_code = result.scalar_one_or_none()
+    if not credit_code:
+        raise HTTPException(status_code=400, detail="Invalid or already used credit code")
+
+    # Apply credits
+    credit_code.used_by = user.id
+    credit_code.used_at = datetime.now(timezone.utc)
+    user.credits += credit_code.amount
+
+    return {"credits": user.credits, "added": credit_code.amount}

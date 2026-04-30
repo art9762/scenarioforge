@@ -3,12 +3,13 @@ import json
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone
 from pydantic import BaseModel
 from typing import AsyncGenerator, Optional
+from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -22,14 +23,19 @@ from backend.services.storage import storage
 from backend.services.export import export_service
 from backend.services.llm import llm_client
 from backend.pipeline.orchestrator import orchestrator, AGENTS
-from backend.db.session import init_db
+from backend.auth.deps import get_current_user, get_current_user_optional
+from backend.db.models import User as DBUser
+from backend.db.session import init_db, get_db
 from backend.auth.routes import router as auth_router
+from backend.admin.routes import router as admin_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Initialize database tables
     await init_db()
+    # Create default admin if no users exist
+    await _ensure_admin()
     # Auto-migrate legacy projects on startup
     migrated = await storage.migrate_all_legacy()
     if migrated:
@@ -38,9 +44,33 @@ async def lifespan(app: FastAPI):
     await llm_client.close()
 
 
-app = FastAPI(title="ScenarioForge", version="2.0.0", lifespan=lifespan)
+async def _ensure_admin():
+    """Create default admin user on first startup if no users exist."""
+    from passlib.context import CryptContext
+    from sqlalchemy import select, func
+    from backend.db.models import User
+
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    async for db in get_db():
+        count = (await db.execute(select(func.count(User.id)))).scalar()
+        if count == 0:
+            admin = User(
+                email=settings.admin_email,
+                hashed_password=pwd_context.hash(settings.admin_password),
+                display_name="Admin",
+                is_admin=True,
+                credits=999999,
+            )
+            db.add(admin)
+            await db.commit()
+            print(f"Created default admin user: {settings.admin_email}")
+        break
+
+
+app = FastAPI(title="ScenarioForge", version="2.1.0", lifespan=lifespan)
 
 app.include_router(auth_router)
+app.include_router(admin_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -111,24 +141,42 @@ async def submit_brief_answers(project_id: str, data: BriefAnswers):
 
 
 @app.post("/api/projects/{project_id}/generate")
-async def start_generation(project_id: str, data: GenerateRequest, background_tasks: BackgroundTasks):
+async def start_generation(project_id: str, data: GenerateRequest, background_tasks: BackgroundTasks,
+                           user: DBUser = Depends(get_current_user_optional),
+                           db: AsyncSession = Depends(get_db)):
     project = await storage.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     if project.status == ProjectStatus.generating:
         raise HTTPException(status_code=409, detail="Generation already in progress")
+
+    # Credit check (if auth enabled and user exists)
+    if user is not None:
+        if user.credits <= 0:
+            raise HTTPException(status_code=403, detail="Insufficient credits")
+        user.credits -= 1
+        await db.commit()
+
     project.depth_mode = data.depth_mode
     project.model_overrides = data.model_overrides
     project.status = ProjectStatus.generating
     project.progress = 0.0
     await storage.save_project(project)
-    background_tasks.add_task(_run_pipeline, project)
+    user_id = user.id if user else None
+    background_tasks.add_task(_run_pipeline, project, user_id)
     return {"status": "generating"}
 
 
-async def _run_pipeline(project: Project):
+async def _run_pipeline(project: Project, user_id: str | None = None):
     try:
-        await orchestrator.run_pipeline(project)
+        scenario, input_tokens, output_tokens = await orchestrator.run_pipeline(project)
+        # Record token usage
+        if user_id:
+            from backend.services.usage import record_tokens
+            async for db in get_db():
+                await record_tokens(db, user_id, input_tokens, output_tokens)
+                await db.commit()
+                break
     except Exception as e:
         project.status = ProjectStatus.error
         project.scenario = f"Error: {str(e)}"

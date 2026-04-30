@@ -40,11 +40,13 @@ async def test_editor_has_system_prompt():
 
 @pytest.mark.asyncio
 async def test_agent_run_calls_llm():
+    from backend.services.llm import LLMResponse
+    mock_resp = LLMResponse(text="Test response", input_tokens=10, output_tokens=20)
     with patch("backend.agents.base.llm_client") as mock_llm:
-        mock_llm.generate = AsyncMock(return_value="Test response")
+        mock_llm.generate_with_usage = AsyncMock(return_value=mock_resp)
         result = await director.run("Test context", model="claude-haiku-4-5")
         assert result == "Test response"
-        mock_llm.generate.assert_called_once_with(
+        mock_llm.generate_with_usage.assert_called_once_with(
             model="claude-haiku-4-5",
             system_prompt=director.system_prompt,
             messages=[{"role": "user", "content": "Test context"}],

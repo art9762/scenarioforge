@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     auth_enabled: bool = False
     jwt_secret: str = "dev-secret-change-me"
     database_url: str = "sqlite+aiosqlite:///./data/scenarioforge.db"
+    admin_email: str = "admin@scenarioforge.local"
+    admin_password: str = "admin"
 
     model_config = {"env_file": str(PROJECT_ROOT / ".env")}
 

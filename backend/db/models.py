@@ -19,6 +19,9 @@ class User(Base):
     hashed_password: str = Column(String(255), nullable=False)
     display_name: str = Column(String(255), nullable=True)
     is_active: bool = Column(Boolean, default=True, nullable=False)
+    is_admin: bool = Column(Boolean, default=False, nullable=False)
+    credits: int = Column(Integer, default=0, nullable=False)
+    invited_by: str = Column(String(36), nullable=True)
     tier: str = Column(String(20), default="free", nullable=False)  # free, pro
     created_at: datetime = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
@@ -54,3 +57,28 @@ class UsageRecord(Base):
     tokens_output: int = Column(Integer, default=0, nullable=False)
 
     user = relationship("User", back_populates="usage_records")
+
+
+class InviteCode(Base):
+    """Invite codes for registration."""
+    __tablename__ = "invite_codes"
+
+    id: str = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    code: str = Column(String(32), unique=True, nullable=False, index=True)
+    created_by: str = Column(String(36), ForeignKey("users.id"), nullable=False)
+    used_by: str = Column(String(36), ForeignKey("users.id"), nullable=True)
+    used_at: datetime = Column(DateTime(timezone=True), nullable=True)
+    created_at: datetime = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class CreditCode(Base):
+    """Codes that add credits to user balance."""
+    __tablename__ = "credit_codes"
+
+    id: str = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    code: str = Column(String(32), unique=True, nullable=False, index=True)
+    amount: int = Column(Integer, nullable=False)
+    created_by: str = Column(String(36), ForeignKey("users.id"), nullable=False)
+    used_by: str = Column(String(36), ForeignKey("users.id"), nullable=True)
+    used_at: datetime = Column(DateTime(timezone=True), nullable=True)
+    created_at: datetime = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

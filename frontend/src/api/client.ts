@@ -2,9 +2,16 @@ import type { Project, BriefingQuestion, PipelineStatus, Scenario, DepthMode, Mo
 
 const BASE = '/api'
 
+function getAuthHeaders(): Record<string, string> {
+  const token = localStorage.getItem('access_token')
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  return headers
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: getAuthHeaders(),
     ...options,
   })
   if (!res.ok) throw new Error(`API error: ${res.status}`)
@@ -71,6 +78,27 @@ export const api = {
 
   // Test
   testModels: () => request<{ results: { model: string; name: string; provider: string; ok: boolean; latency: number; reply?: string; error?: string }[] }>('/test/models', { method: 'POST' }),
+
+  // Auth
+  login: (email: string, password: string) =>
+    request<{ access_token: string; refresh_token: string; user_id: string; email: string; display_name: string }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  register: (email: string, password: string, invite_code: string, display_name?: string) =>
+    request<{ access_token: string; refresh_token: string; user_id: string; email: string; display_name: string }>('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, invite_code, display_name }) }),
+  getMe: () => request<{ user_id?: string; email?: string; display_name?: string; is_admin?: boolean; credits?: number; auth_enabled: boolean }>('/auth/me'),
+  redeemCode: (code: string) =>
+    request<{ credits: number; added: number }>('/auth/redeem', { method: 'POST', body: JSON.stringify({ code }) }),
+
+  // Admin
+  adminListUsers: () => request<any[]>('/admin/users'),
+  adminUpdateUser: (id: string, data: { credits?: number; is_active?: boolean; is_admin?: boolean }) =>
+    request<any>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  adminGenerateInviteCodes: (count: number) =>
+    request<{ codes: string[] }>('/admin/invite-codes', { method: 'POST', body: JSON.stringify({ count }) }),
+  adminListInviteCodes: () => request<any[]>('/admin/invite-codes'),
+  adminGenerateCreditCodes: (count: number, amount: number) =>
+    request<{ codes: any[] }>('/admin/credit-codes', { method: 'POST', body: JSON.stringify({ count, amount }) }),
+  adminListCreditCodes: () => request<any[]>('/admin/credit-codes'),
+  adminGetStats: () => request<any>('/admin/stats'),
 
   // SSE stream
   streamStatus: (id: string): EventSource => {

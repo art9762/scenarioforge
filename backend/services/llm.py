@@ -1,6 +1,14 @@
 import httpx
+from dataclasses import dataclass
 from typing import Optional
 from backend.config import settings
+
+
+@dataclass
+class LLMResponse:
+    text: str
+    input_tokens: int
+    output_tokens: int
 
 
 class LLMClient:
@@ -21,6 +29,18 @@ class LLMClient:
         messages: list[dict],
         max_tokens: int = 4096,
     ) -> str:
+        """Generate text. Returns only text for backward compat."""
+        resp = await self.generate_with_usage(model, system_prompt, messages, max_tokens)
+        return resp.text
+
+    async def generate_with_usage(
+        self,
+        model: str,
+        system_prompt: str,
+        messages: list[dict],
+        max_tokens: int = 4096,
+    ) -> LLMResponse:
+        """Generate text and return usage info."""
         provider = self._get_provider(model)
         if provider == "aurora":
             return await self._call_aurora(model, system_prompt, messages, max_tokens)
@@ -29,7 +49,7 @@ class LLMClient:
 
     async def _call_aurora(
         self, model: str, system_prompt: str, messages: list[dict], max_tokens: int
-    ) -> str:
+    ) -> LLMResponse:
         """Anthropic Messages API compatible call."""
         url = f"{settings.trinity_aurora_url}/messages"
         payload = {
@@ -46,11 +66,16 @@ class LLMClient:
         resp = await self._client.post(url, json=payload, headers=headers)
         resp.raise_for_status()
         data = resp.json()
-        return data["content"][0]["text"]
+        usage = data.get("usage", {})
+        return LLMResponse(
+            text=data["content"][0]["text"],
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+        )
 
     async def _call_orion(
         self, model: str, system_prompt: str, messages: list[dict], max_tokens: int
-    ) -> str:
+    ) -> LLMResponse:
         """OpenAI Chat Completions compatible call."""
         url = f"{settings.trinity_orion_url}/chat/completions"
         oai_messages = [{"role": "system", "content": system_prompt}]
@@ -68,7 +93,12 @@ class LLMClient:
         resp = await self._client.post(url, json=payload, headers=headers)
         resp.raise_for_status()
         data = resp.json()
-        return data["choices"][0]["message"]["content"]
+        usage = data.get("usage", {})
+        return LLMResponse(
+            text=data["choices"][0]["message"]["content"],
+            input_tokens=usage.get("prompt_tokens", 0),
+            output_tokens=usage.get("completion_tokens", 0),
+        )
 
     async def close(self):
         await self._client.aclose()
