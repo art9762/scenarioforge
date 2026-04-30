@@ -32,6 +32,8 @@ class ProjectStatus(str, Enum):
 
 
 class Project(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     idea: str
     type: ProjectType
@@ -55,6 +57,8 @@ class ProjectCreate(BaseModel):
 
 
 class GenerateRequest(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
     depth_mode: str = "standard"
     model_overrides: dict[str, str] = Field(default_factory=dict)
 

@@ -20,8 +20,8 @@ export const api = {
   deleteProject: (id: string) => request<void>(`/projects/${id}`, { method: 'DELETE' }),
 
   // Pipeline
-  startBriefing: (id: string) => request<{ questions: BriefingQuestion[] }>(`/projects/${id}/brief`, { method: 'POST' }),
-  submitAnswers: (id: string, answers: { id: string; answer: string }[]) =>
+  startBriefing: (id: string) => request<{ questions: (string | BriefingQuestion)[] }>(`/projects/${id}/brief`, { method: 'POST' }),
+  submitAnswers: (id: string, answers: string[]) =>
     request<void>(`/projects/${id}/brief/answers`, { method: 'POST', body: JSON.stringify({ answers }) }),
   startGeneration: (id: string, depth: DepthMode, models?: ModelConfig) =>
     request<void>(`/projects/${id}/generate`, { method: 'POST', body: JSON.stringify({ depth, models }) }),

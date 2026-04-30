@@ -14,7 +14,9 @@ export default function Briefing() {
   useEffect(() => {
     if (!id) return
     api.startBriefing(id)
-      .then((data) => setQuestions(data.questions.map((q) => ({ ...q, answer: '' }))))
+      .then((data) => setQuestions(data.questions.map((q: string | BriefingQuestion, i: number) =>
+        typeof q === 'string' ? { id: String(i), question: q, answer: '' } : { ...q, answer: '' }
+      )))
       .catch(() => setQuestions([]))
       .finally(() => setLoading(false))
   }, [id])
@@ -27,7 +29,7 @@ export default function Briefing() {
     if (!id) return
     setSubmitting(true)
     try {
-      await api.submitAnswers(id, questions.map((q) => ({ id: q.id, answer: q.answer || '' })))
+      await api.submitAnswers(id, questions.map((q) => q.answer || ''))
       navigate(`/projects/${id}/generation`)
     } catch {
       alert('Ошибка отправки ответов')

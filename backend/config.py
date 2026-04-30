@@ -1,5 +1,8 @@
+from pathlib import Path
 from pydantic_settings import BaseSettings
-from pydantic import Field
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
@@ -11,7 +14,7 @@ class Settings(BaseSettings):
     port: int = 8000
 
     class Config:
-        env_file = ".env"
+        env_file = str(PROJECT_ROOT / ".env")
 
 
 settings = Settings()
