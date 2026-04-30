@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { api } from '../api/client'
 import type { Scenario } from '../types'
 import Spinner from '../components/Spinner'
+import { normalizeScenarioResponse } from '../utils/scenario'
 
 export default function ScenarioView() {
   const { id } = useParams<{ id: string }>()
@@ -13,7 +14,7 @@ export default function ScenarioView() {
   useEffect(() => {
     if (!id) return
     api.getScenario(id)
-      .then((data: any) => setScenario(data.scenario || data))
+      .then((data) => setScenario(normalizeScenarioResponse(data)))
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [id])

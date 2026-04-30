@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import type { DepthMode } from '../types'
+import type { DepthMode, EquipmentProfile } from '../types'
 import { api } from '../api/client'
 
 const AGENTS = ['director', 'screenwriter', 'visual_director', 'copywriter', 'editor']
@@ -11,29 +11,55 @@ const AGENT_LABELS: Record<string, string> = {
   editor: 'Редактор',
 }
 
+const DEFAULT_EQUIPMENT: EquipmentProfile = {
+  camera: '',
+  lenses: '',
+  lighting: '',
+  audio: '',
+  locations: '',
+  special: '',
+}
+
+type SavedSettings = {
+  depth: DepthMode
+  overrides: Record<string, string>
+  equipment: EquipmentProfile
+}
+
+function loadSavedSettings(): SavedSettings {
+  const defaults = {
+    depth: 'standard' as DepthMode,
+    overrides: {},
+    equipment: DEFAULT_EQUIPMENT,
+  }
+
+  try {
+    const saved = localStorage.getItem('sf_settings')
+    if (!saved) {
+      return defaults
+    }
+
+    const parsed = JSON.parse(saved) as Partial<SavedSettings>
+
+    return {
+      depth: parsed.depth ?? defaults.depth,
+      overrides: parsed.overrides ?? defaults.overrides,
+      equipment: { ...defaults.equipment, ...parsed.equipment },
+    }
+  } catch {
+    return defaults
+  }
+}
+
 export default function Settings() {
-  const [depth, setDepth] = useState<DepthMode>('standard')
+  const [savedSettings] = useState(loadSavedSettings)
+  const [depth, setDepth] = useState<DepthMode>(savedSettings.depth)
   const [models, setModels] = useState<string[]>([])
-  const [overrides, setOverrides] = useState<Record<string, string>>({})
-  const [equipment, setEquipment] = useState({
-    camera: '',
-    lenses: '',
-    lighting: '',
-    audio: '',
-    locations: '',
-    special: '',
-  })
+  const [overrides, setOverrides] = useState<Record<string, string>>(savedSettings.overrides)
+  const [equipment, setEquipment] = useState<EquipmentProfile>(savedSettings.equipment)
 
   useEffect(() => {
     api.getModels().then(setModels).catch(() => setModels(['claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-6', 'gpt-5.2']))
-    // Load saved settings from localStorage
-    const saved = localStorage.getItem('sf_settings')
-    if (saved) {
-      const s = JSON.parse(saved)
-      if (s.depth) setDepth(s.depth)
-      if (s.overrides) setOverrides(s.overrides)
-      if (s.equipment) setEquipment(s.equipment)
-    }
   }, [])
 
   const save = () => {

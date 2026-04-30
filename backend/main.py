@@ -1,9 +1,14 @@
 import asyncio
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from typing import AsyncGenerator
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.config import settings, AVAILABLE_MODELS, DEPTH_MODES
 from backend.models.project import (

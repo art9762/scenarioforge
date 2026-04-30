@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import type { Scenario } from '../types'
 import Spinner from '../components/Spinner'
+import { normalizeScenarioResponse } from '../utils/scenario'
 
 const AGENTS = [
   { value: 'screenwriter', label: 'Сценарист' },
@@ -22,7 +23,7 @@ export default function ScenarioEditor() {
   useEffect(() => {
     if (!id) return
     api.getScenario(id)
-      .then((data: any) => setScenario(data.scenario || data))
+      .then((data) => setScenario(normalizeScenarioResponse(data)))
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [id])
