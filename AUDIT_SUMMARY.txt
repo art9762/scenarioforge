@@ -1,0 +1,325 @@
+================================================================================
+                    SCENARIOFORGE v2 BRANCH AUDIT
+                         EXECUTIVE SUMMARY
+================================================================================
+
+AUDIT DATE: 2026-04-30
+BRANCH: v2
+STATUS: ✓ Clean working tree
+
+================================================================================
+OVERALL ASSESSMENT: PRODUCTION NOT READY ❌
+================================================================================
+
+Architecture:     SOLID ✅
+Code Quality:     GOOD ✅  
+Security:         CRITICAL ISSUES ❌
+Multi-tenancy:    BROKEN ❌
+Billing/Limits:   BROKEN ❌
+Database Schema:  UNUSED ❌
+
+Estimated Time to Production: 2-3 weeks
+
+================================================================================
+WHAT WORKS (✅)
+================================================================================
+
+Backend:
+✅ JWT authentication (register, login, refresh tokens)
+✅ User model with password hashing (bcrypt)
+✅ Async SQLAlchemy + SQLite setup
+✅ LLM client (dual-provider Aurora/Orion)
+✅ Multi-agent pipeline (5 agents with specialized roles)
+✅ Filesystem storage with atomic writes
+✅ Revision history and chat history tracking
+✅ Export to MD and PDF
+✅ Project metadata serialization
+
+Frontend:
+✅ React 19.2 with TypeScript
+✅ Router and layout structure
+✅ Text selection menu with context operations
+✅ Real-time generation UI with SSE streaming
+✅ Agent chat interface with history
+✅ Revision comparison view
+✅ Scene navigation
+✅ Scenario export links
+
+Infrastructure:
+✅ All dependencies present and pinned
+✅ Pytest setup with async support
+✅ Tailwind CSS styling
+
+================================================================================
+CRITICAL SECURITY ISSUES (🔴 BLOCKING)
+================================================================================
+
+1. NO USER ISOLATION - SEVERITY: CRITICAL
+   Files: backend/main.py (all endpoints)
+   Problem: All endpoints open to all users
+   Impact: User A can see/edit/delete User B's projects
+   Example: GET /api/projects returns ALL projects (not filtered)
+   Fix: Add `user: User = Depends(get_current_user)` + filter by user_id
+
+2. NO USAGE TRACKING - SEVERITY: BUSINESS CRITICAL  
+   Files: backend/services/usage.py + backend/main.py
+   Problem: Usage service exists but never called
+   Impact: Tier limits don't work, can't bill Pro users
+   Fix: Integrate check_generation_allowed() and record_* functions
+
+3. DATABASE/FILESYSTEM MISMATCH - SEVERITY: DATA CRITICAL
+   Files: backend/main.py:59 + db/models.py
+   Problem: Projects saved to filesystem, DB never written
+   Impact: ProjectRecord table empty, multi-tenant impossible
+   Fix: Create ProjectRecord row in DB when project created
+
+4. NO TOKEN TRACKING - SEVERITY: BUSINESS CRITICAL
+   Files: backend/services/llm.py + orchestrator.py
+   Problem: Token usage never collected
+   Impact: Can't bill Pro users accurately
+   Fix: Return token counts from generate(), track in orchestrator
+
+5. FRONTEND MISSING AUTH HEADERS - SEVERITY: AUTH CRITICAL
+   Files: frontend/src/api/client.ts
+   Problem: No JWT in Authorization header
+   Impact: All requests fail if auth_enabled=True
+   Fix: Add localStorage token + inject Bearer header
+
+================================================================================
+CRITICAL BUGS (🔴 BLOCKING)
+================================================================================
+
+6. USER REGISTRATION NOT COMMITTED
+   File: backend/auth/routes.py:62
+   Issue: await db.flush() but no await db.commit()
+   Impact: User created but not persisted if transaction rolls back
+
+7. NO ALEMBIC MIGRATIONS
+   Missing: /backend/alembic/ directory entirely
+   Impact: Cannot manage schema changes in production
+
+8. API MISMATCH - reviseScene
+   File: frontend/src/api/client.ts:35 vs backend/main.py:163
+   Issue: Frontend sends 3 params, backend expects 4 (missing instructions)
+   Impact: Revise endpoint always fails
+
+9. STATUS ENUM MISMATCH
+   File: Multiple locations
+   Issue: Backend uses 'completed', frontend checks for 'done' AND 'completed'
+   Impact: Generation completion might not redirect properly
+
+10. REVISION FILENAME PARSING BROKEN
+    File: backend/services/storage.py:290
+    Issue: Split on "_" breaks if source contains underscores
+    Example: "20260430_125030_before_manual_edit.md" parses wrong
+    Impact: Revision history corrupted for sources with underscores
+
+================================================================================
+ADDITIONAL ISSUES
+================================================================================
+
+Medium Priority (Week 1):
+- Memory leaks: Unbounded lock dictionary in storage service
+- No retry logic in LLM client (Trinity failures immediately fail)
+- Model overrides not validated
+- Chat endpoints not checking project ownership
+- SSE stream not filtering by user
+- Export endpoints open to all users
+- Only 3 tests for massive codebase
+- No structured logging
+- No health check endpoint
+
+Low Priority:
+- Draft previews truncated to 500 chars
+- No concurrent generation limiting
+- No error recovery strategies
+- Type mismatches (Project.title, status enum)
+
+================================================================================
+INTEGRATION STATUS
+================================================================================
+
+Working Connections:
+✓ Storage ↔ Orchestrator
+✓ Orchestrator ↔ Agents  
+✓ Agents ↔ LLM Client
+✓ Frontend ↔ API (mostly)
+✓ Storage ↔ Frontend (via API)
+
+Broken Connections:
+✗ Database ↔ Projects (never written)
+✗ Usage Service ↔ Generation (never called)
+✗ Auth Deps ↔ Endpoints (not used)
+✗ Frontend Auth ↔ API (no JWT header)
+✗ LLM Tokens ↔ Usage Tracking (no collection)
+
+================================================================================
+IMMEDIATE ACTION ITEMS (TODAY)
+================================================================================
+
+Priority 1 - Add Authentication to All Endpoints:
+□ Add user: User = Depends(get_current_user) to ALL endpoints
+□ Filter storage.list_projects() by user_id
+□ Add ownership checks to chat, revise, export endpoints
+□ Add user_id filtering to SSE stream
+
+Priority 2 - Fix Database Integration:
+□ Create ProjectRecord in DB when project created
+□ Link ProjectRecord to user_id (foreign key)
+□ Verify projects table actually gets data
+
+Priority 3 - Wire Usage Tracking:
+□ Call check_generation_allowed() in /generate endpoint
+□ Call record_generation() after completion
+□ Modify llm_client.generate() to return token counts
+□ Call record_tokens() with usage data
+
+Priority 4 - Fix Frontend Auth:
+□ Add JWT token retrieval from localStorage
+□ Inject Authorization header in all requests
+□ Handle 401 responses with re-login
+
+Priority 5 - Critical Bug Fixes:
+□ Add await db.commit() in auth/routes.py register
+□ Fix reviseScene() signature to include instructions
+□ Fix revision filename parsing (use -- delimiter)
+□ Fix status enum consistency
+
+================================================================================
+FILES WITH ISSUES (by Criticality)
+================================================================================
+
+Critical (P0):
+- backend/main.py (485 lines)           [No auth, no usage tracking, no DB sync]
+- frontend/src/api/client.ts (79 lines) [No JWT headers, API mismatches]
+- backend/auth/routes.py (128 lines)    [No DB commit]
+
+High (P1):
+- backend/services/storage.py (356)     [Memory leaks, fragile parsing]
+- backend/services/llm.py (78 lines)    [No tokens, no retry]
+- backend/services/usage.py (97 lines)  [Never called]
+- backend/db/session.py (30 lines)      [No Alembic]
+- frontend/src/types/index.ts (87)      [Status enum mismatch]
+
+Good (✅):
+- backend/auth/jwt.py (45 lines)
+- backend/auth/deps.py (57 lines)
+- backend/db/models.py (57 lines)
+- backend/pipeline/orchestrator.py (185)
+- backend/agents/base.py (21 lines)
+- frontend pages and components (mostly)
+
+================================================================================
+TESTING COVERAGE
+================================================================================
+
+Current: 3 tests (briefing generation, fast pipeline, stop signal)
+
+Missing:
+- Auth tests (401/403 verification)
+- Multi-tenant tests (isolation verification)
+- Usage tracking tests
+- API endpoint tests
+- Storage tests
+- Integration tests
+- Frontend component tests
+
+Estimated Additional Tests Needed: 50+ test cases
+
+================================================================================
+DEPLOYMENT CHECKLIST
+================================================================================
+
+Security:                    🔴 BLOCKED
+├─ User isolation            🔴 Not implemented
+├─ API authentication        🔴 Not enforced
+├─ Frontend token handling   🔴 Missing
+└─ Permission verification   🔴 Missing
+
+Operations:                  🔴 BLOCKED
+├─ Database migrations       🔴 Not set up
+├─ Error handling            🟠 Basic
+├─ Logging                   🔴 Missing
+├─ Monitoring                🔴 Missing
+└─ Health checks             🔴 Missing
+
+Data Integrity:              🔴 BLOCKED
+├─ User project linking      🔴 Missing
+├─ Token tracking            🔴 Missing
+├─ Tier enforcement          🔴 Not working
+└─ Billing data              🔴 Not collected
+
+Quality Assurance:           🟡 MINIMAL
+├─ Test coverage             🟡 3% (3 tests)
+├─ Integration tests         🔴 None
+└─ E2E tests                 🔴 None
+
+================================================================================
+RECOMMENDATIONS
+================================================================================
+
+Phase 1 (Days 1-2): Critical Security Fixes
+- Add auth to all endpoints
+- Fix database/filesystem sync
+- Add JWT header in frontend
+- Fix user registration commit
+
+Phase 2 (Days 3-4): Core Functionality
+- Wire usage tracking
+- Set up Alembic
+- Fix API mismatches
+- Add token tracking
+
+Phase 3 (Days 5-7): Testing & Polish  
+- Add comprehensive tests
+- Fix memory leaks
+- Add error retry logic
+- Add structured logging
+
+Phase 4 (Days 8-10): Deployment Ready
+- Load testing
+- Security audit
+- Documentation
+- Deployment guide
+
+================================================================================
+CONCLUSION
+================================================================================
+
+The v2 branch shows solid architectural foundation with clean code structure
+and good separation of concerns. The frontend UI is polished and the multi-agent
+pipeline is well-designed.
+
+However, the system has CRITICAL SECURITY AND OPERATIONAL ISSUES that make it
+unsuitable for any production use:
+
+❌ NO USER ISOLATION (security risk)
+❌ USAGE TRACKING BROKEN (can't charge users)
+❌ DATABASE UNUSED (can't scale)
+❌ AUTH INCOMPLETE (frontend missing tokens)
+❌ ALEMBIC NOT SET UP (can't manage schema)
+
+VERDICT: NOT PRODUCTION READY
+
+The codebase is suitable for:
+✓ Internal testing/development
+✓ Single-user demo
+✓ Reference implementation
+
+The codebase is NOT suitable for:
+✗ Multi-user deployment
+✗ Customer-facing service
+✗ Production environment
+✗ Billing implementation
+
+ESTIMATED TIME TO PRODUCTION: 2-3 weeks with focused effort on critical issues
+
+================================================================================
+DETAILED REPORT
+================================================================================
+
+See attached files:
+- V2_AUDIT_REPORT.md     (Comprehensive technical analysis)
+- CRITICAL_ISSUES.md     (Detailed issue descriptions and fixes)
+
+================================================================================
