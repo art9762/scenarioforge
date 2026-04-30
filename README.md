@@ -56,7 +56,7 @@ User Idea → [Director] → [Screenwriter] → [Visual Director] → [Copywrite
 ### Installation
 
 ```bash
-git clone https://github.com/your-org/scenarioforge.git
+git clone https://github.com/art9762/scenarioforge.git
 cd scenarioforge
 
 # Backend
