@@ -18,37 +18,85 @@ export default function Generation() {
   const navigate = useNavigate()
   const [status, setStatus] = useState<PipelineStatus>({ status: 'idle', progress: 0 })
   const [depth, setDepth] = useState<DepthMode>('standard')
-  const [started, setStarted] = useState(false)
+  const [phase, setPhase] = useState<'loading' | 'form' | 'running' | 'error'>('loading')
+  const [errorMsg, setErrorMsg] = useState('')
   const intervalRef = useRef<number>(0)
 
-  const startGen = async () => {
-    if (!id) return
-    try {
-      await api.startGeneration(id, depth)
-      setStarted(true)
-    } catch {
-      alert('Ошибка запуска генерации')
-    }
-  }
-
+  // On mount: check current project status
   useEffect(() => {
-    if (!id || !started) return
+    if (!id) return
+    api.getStatus(id).then((s) => {
+      setStatus(s)
+      if (s.status === 'generating') {
+        setPhase('running')
+      } else if (s.status === 'completed' || s.status === 'done') {
+        navigate(`/projects/${id}/scenario`, { replace: true })
+      } else if (s.status === 'error') {
+        setPhase('error')
+        setErrorMsg(s.message || 'Ошибка генерации')
+      } else if (s.status === 'stopped') {
+        setPhase('error')
+        setErrorMsg('Генерация была остановлена')
+      } else {
+        setPhase('form')
+      }
+    }).catch(() => setPhase('form'))
+  }, [id, navigate])
+
+  // Poll while running
+  useEffect(() => {
+    if (!id || phase !== 'running') return
     const poll = () => {
       api.getStatus(id).then(setStatus).catch(() => {})
     }
     poll()
     intervalRef.current = window.setInterval(poll, 2000)
     return () => clearInterval(intervalRef.current)
-  }, [id, started])
+  }, [id, phase])
 
+  // React to status changes
   useEffect(() => {
-    if (status.status === 'done') {
+    if (status.status === 'done' || status.status === 'completed') {
       clearInterval(intervalRef.current)
       setTimeout(() => navigate(`/projects/${id}/scenario`), 1000)
+    } else if (status.status === 'error') {
+      clearInterval(intervalRef.current)
+      setPhase('error')
+      setErrorMsg(status.message || 'Ошибка генерации')
     }
   }, [status, id, navigate])
 
-  if (!started) {
+  const startGen = async () => {
+    if (!id) return
+    try {
+      await api.startGeneration(id, depth)
+      setPhase('running')
+    } catch {
+      alert('Ошибка запуска генерации')
+    }
+  }
+
+  if (phase === 'loading') {
+    return (
+      <div className="max-w-md mx-auto text-center py-12">
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin mx-auto" />
+      </div>
+    )
+  }
+
+  if (phase === 'error') {
+    return (
+      <div className="max-w-md mx-auto text-center py-12">
+        <h1 className="text-2xl font-bold mb-4">Ошибка</h1>
+        <p className="text-danger mb-6">{errorMsg}</p>
+        <button onClick={() => setPhase('form')} className="bg-accent text-bg-primary px-8 py-3 rounded font-medium hover:opacity-90">
+          Попробовать снова
+        </button>
+      </div>
+    )
+  }
+
+  if (phase === 'form') {
     return (
       <div className="max-w-md mx-auto text-center py-12">
         <h1 className="text-2xl font-bold mb-6">Запуск генерации</h1>
@@ -100,7 +148,7 @@ export default function Generation() {
         {status.message || `${status.progress}%`}
       </p>
 
-      {status.status === 'done' && (
+      {(status.status === 'done' || status.status === 'completed') && (
         <p className="text-center text-success mt-4 font-medium">Готово! Переход к сценарию...</p>
       )}
       {status.status === 'error' && (

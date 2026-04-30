@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import type { Project } from '../types'
@@ -11,19 +11,54 @@ const TYPE_LABELS: Record<string, string> = {
 }
 
 const STATUS_LABELS: Record<string, string> = {
+  created: 'Черновик',
   draft: 'Черновик',
-  briefing: 'Бриф',
-  generating: 'Генерация',
+  briefing: 'Бриф...',
+  questions_ready: 'Бриф',
+  answers_submitted: 'Готов к генерации',
+  generating: 'Генерация...',
+  completed: 'Готов',
   done: 'Готов',
+  error: 'Ошибка',
+  stopped: 'Остановлен',
 }
+
+function projectRoute(p: Project): string {
+  switch (p.status) {
+    case 'completed':
+    case 'done':
+      return `/projects/${p.id}/scenario`
+    case 'generating':
+      return `/projects/${p.id}/generation`
+    default:
+      return `/projects/${p.id}/briefing`
+  }
+}
+
+const ACTIVE_STATUSES = ['generating', 'briefing']
 
 export default function ProjectList() {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
+  const intervalRef = useRef<number>(0)
+
+  const fetchProjects = () => {
+    api.listProjects().then(setProjects).catch(() => {})
+  }
 
   useEffect(() => {
     api.listProjects().then(setProjects).catch(() => setProjects([])).finally(() => setLoading(false))
   }, [])
+
+  // Poll while any project is in an active state
+  useEffect(() => {
+    clearInterval(intervalRef.current)
+    const hasActive = projects.some((p) => ACTIVE_STATUSES.includes(p.status))
+    if (hasActive) {
+      intervalRef.current = window.setInterval(fetchProjects, 5000)
+    }
+    return () => clearInterval(intervalRef.current)
+  }, [projects])
 
   if (loading) return <Spinner label="Загрузка проектов..." />
 
@@ -46,7 +81,7 @@ export default function ProjectList() {
           {projects.map((p) => (
             <Link
               key={p.id}
-              to={p.status === 'done' ? `/projects/${p.id}/scenario` : p.status === 'generating' ? `/projects/${p.id}/generation` : p.status === 'briefing' ? `/projects/${p.id}/briefing` : `/projects/${p.id}/briefing`}
+              to={projectRoute(p)}
               className="block bg-bg-secondary border border-bg-tertiary rounded-lg p-4 no-underline hover:border-accent-dim transition-colors"
             >
               <div className="flex justify-between items-start">

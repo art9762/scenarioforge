@@ -75,6 +75,8 @@ async def start_briefing(project_id: str):
     project = await storage.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    if project.briefing_questions:
+        return {"questions": project.briefing_questions}
     project.status = ProjectStatus.briefing
     await storage.save_project(project)
     questions = await orchestrator.generate_briefing(project)
@@ -100,6 +102,8 @@ async def start_generation(project_id: str, data: GenerateRequest, background_ta
     project = await storage.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    if project.status == ProjectStatus.generating:
+        raise HTTPException(status_code=409, detail="Generation already in progress")
     project.depth_mode = data.depth_mode
     project.model_overrides = data.model_overrides
     project.status = ProjectStatus.generating
