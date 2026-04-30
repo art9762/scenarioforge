@@ -43,28 +43,27 @@ export default function Generation() {
     }).catch(() => setPhase('form'))
   }, [id, navigate])
 
-  // Poll while running
+  // Poll while running and react to status changes
   useEffect(() => {
     if (!id || phase !== 'running') return
+    const handleStatus = (s: PipelineStatus) => {
+      setStatus(s)
+      if (s.status === 'done' || s.status === 'completed') {
+        clearInterval(intervalRef.current)
+        setTimeout(() => navigate(`/projects/${id}/scenario`), 1000)
+      } else if (s.status === 'error') {
+        clearInterval(intervalRef.current)
+        setPhase('error')
+        setErrorMsg(s.message || 'Ошибка генерации')
+      }
+    }
     const poll = () => {
-      api.getStatus(id).then(setStatus).catch(() => {})
+      api.getStatus(id).then(handleStatus).catch(() => {})
     }
     poll()
     intervalRef.current = window.setInterval(poll, 2000)
     return () => clearInterval(intervalRef.current)
-  }, [id, phase])
-
-  // React to status changes
-  useEffect(() => {
-    if (status.status === 'done' || status.status === 'completed') {
-      clearInterval(intervalRef.current)
-      setTimeout(() => navigate(`/projects/${id}/scenario`), 1000)
-    } else if (status.status === 'error') {
-      clearInterval(intervalRef.current)
-      setPhase('error')
-      setErrorMsg(status.message || 'Ошибка генерации')
-    }
-  }, [status, id, navigate])
+  }, [id, phase, navigate])
 
   const startGen = async () => {
     if (!id) return

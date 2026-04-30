@@ -42,4 +42,7 @@ export const api = {
   // Config
   getModels: () => request<{ id: string; provider: string; name: string }[]>('/config/models'),
   getDepthModes: () => request<Record<string, unknown>>('/config/depth-modes'),
+
+  // Test
+  testModels: () => request<{ results: { model: string; name: string; provider: string; ok: boolean; latency: number; reply?: string; error?: string }[] }>('/test/models', { method: 'POST' }),
 }

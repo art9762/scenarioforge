@@ -4,7 +4,7 @@ export interface Project {
   idea: string
   type: 'youtube' | 'short_film' | 'miniature'
   equipment: EquipmentProfile
-  status: 'draft' | 'briefing' | 'generating' | 'done'
+  status: 'created' | 'draft' | 'briefing' | 'questions_ready' | 'answers_submitted' | 'generating' | 'completed' | 'done' | 'error' | 'stopped'
   created_at: string
 }
 
@@ -24,7 +24,7 @@ export interface BriefingQuestion {
 }
 
 export interface PipelineStatus {
-  status: 'idle' | 'running' | 'done' | 'error'
+  status: 'idle' | 'running' | 'done' | 'error' | 'generating' | 'completed' | 'stopped'
   current_agent?: string
   progress: number
   message?: string

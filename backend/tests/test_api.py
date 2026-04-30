@@ -86,3 +86,34 @@ async def test_get_depth_modes():
         assert "fast" in modes
         assert "standard" in modes
         assert "deep" in modes
+
+
+@pytest.mark.asyncio
+async def test_test_models():
+    with patch("backend.main.llm_client") as mock_llm:
+        mock_llm.generate = AsyncMock(return_value="OK")
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/api/test/models")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "results" in data
+            assert len(data["results"]) >= 3
+            for r in data["results"]:
+                assert r["ok"] is True
+                assert r["latency"] >= 0
+                assert "model" in r
+
+
+@pytest.mark.asyncio
+async def test_test_models_failure():
+    with patch("backend.main.llm_client") as mock_llm:
+        mock_llm.generate = AsyncMock(side_effect=Exception("Connection refused"))
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/api/test/models")
+            assert resp.status_code == 200
+            data = resp.json()
+            for r in data["results"]:
+                assert r["ok"] is False
+                assert "Connection refused" in r["error"]

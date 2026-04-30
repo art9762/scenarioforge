@@ -19,6 +19,9 @@ export default function Layout() {
           <Link to="/settings" className={`no-underline ${location.pathname === '/settings' ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}>
             Настройки
           </Link>
+          <Link to="/test" className={`no-underline ${location.pathname === '/test' ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}>
+            Тест
+          </Link>
         </nav>
       </header>
       <main className="flex-1 p-6 max-w-5xl mx-auto w-full">

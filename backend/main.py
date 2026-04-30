@@ -230,6 +230,50 @@ async def stream_status(project_id: str):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
+# --- Test Models ---
+
+@app.post("/api/test/models")
+async def test_models():
+    """Send a tiny request to every configured model and report status."""
+    import time
+
+    results = []
+
+    async def _test_one(model_info: dict):
+        model_id = model_info["id"]
+        t0 = time.monotonic()
+        try:
+            reply = await llm_client.generate(
+                model=model_id,
+                system_prompt="You are a test assistant.",
+                messages=[{"role": "user", "content": "Say OK"}],
+                max_tokens=16,
+            )
+            elapsed = round(time.monotonic() - t0, 2)
+            results.append({
+                "model": model_id,
+                "name": model_info["name"],
+                "provider": model_info["provider"],
+                "ok": True,
+                "latency": elapsed,
+                "reply": reply.strip()[:100],
+            })
+        except Exception as e:
+            elapsed = round(time.monotonic() - t0, 2)
+            results.append({
+                "model": model_id,
+                "name": model_info["name"],
+                "provider": model_info["provider"],
+                "ok": False,
+                "latency": elapsed,
+                "error": str(e)[:200],
+            })
+
+    await asyncio.gather(*[_test_one(m) for m in AVAILABLE_MODELS])
+    results.sort(key=lambda r: r["model"])
+    return {"results": results}
+
+
 # --- Config ---
 
 @app.get("/api/config/models")

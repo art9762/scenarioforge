@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 from typing import AsyncGenerator, Optional
 from backend.agents.director import director
 from backend.agents.screenwriter import screenwriter
@@ -102,7 +103,7 @@ class PipelineOrchestrator:
 
         result = await agent.run(context, model=model)
         project.scenario = result
-        project.updated_at = project.updated_at.__class__.utcnow()
+        project.updated_at = datetime.now(timezone.utc)
         await storage.save_project(project)
         return result
 

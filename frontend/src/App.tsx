@@ -8,6 +8,7 @@ import Generation from './pages/Generation'
 import ScenarioView from './pages/ScenarioView'
 import ScenarioEditor from './pages/ScenarioEditor'
 import Settings from './pages/Settings'
+import TestModels from './pages/TestModels'
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
         <Route path="projects/:id/scenario" element={<ScenarioView />} />
         <Route path="projects/:id/edit" element={<ScenarioEditor />} />
         <Route path="settings" element={<ErrorBoundary><Settings /></ErrorBoundary>} />
+        <Route path="test" element={<TestModels />} />
       </Route>
     </Routes>
   )
