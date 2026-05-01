@@ -10,6 +10,8 @@ from backend.config import settings
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
 REFRESH_TOKEN_EXPIRE_DAYS = 7
+TOKEN_TYPE_ACCESS = "access"
+TOKEN_TYPE_REFRESH = "refresh"
 
 
 def create_access_token(user_id: str) -> str:
@@ -17,7 +19,7 @@ def create_access_token(user_id: str) -> str:
     payload = {
         "sub": user_id,
         "exp": expire,
-        "type": "access",
+        "type": TOKEN_TYPE_ACCESS,
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=ALGORITHM)
 
@@ -27,12 +29,12 @@ def create_refresh_token(user_id: str) -> str:
     payload = {
         "sub": user_id,
         "exp": expire,
-        "type": "refresh",
+        "type": TOKEN_TYPE_REFRESH,
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=ALGORITHM)
 
 
-def verify_token(token: str, token_type: str = "access") -> Optional[str]:
+def verify_token(token: str, token_type: str = TOKEN_TYPE_ACCESS) -> Optional[str]:
     """Verify JWT token and return user_id, or None if invalid."""
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[ALGORITHM])
