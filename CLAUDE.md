@@ -58,6 +58,29 @@ React 19 + Vite + Tailwind CSS 4 + React Router 7. Dark minimalist UI. API clien
 ### Test Mode
 `POST /api/test/models` sends a short ping to every model in `AVAILABLE_MODELS` concurrently and returns ok/fail, latency, and reply. Frontend page at `/test` (`frontend/src/pages/TestModels.tsx`).
 
+## Docker
+
+Both backend and frontend have multi-stage Dockerfiles:
+- `backend/Dockerfile` — Python 3.11-slim + WeasyPrint system deps, runs uvicorn on port 8000
+- `frontend/Dockerfile` — Node 20 build → nginx:alpine, serves SPA on port 80
+- `frontend/nginx.conf` — SPA fallback + `/api/` proxy to backend
+
+### Docker Commands
+```bash
+docker build -t scenarioforge-backend backend/
+docker build -t scenarioforge-frontend frontend/
+```
+
+### CI/CD
+- `.github/workflows/ci.yml` — tests & lint (all branches)
+- `.github/workflows/docker.yml` — builds & pushes Docker images to GHCR on push to `master` and `v*` tags
+
+Images published to: `ghcr.io/art9762/scenarioforge/backend` and `ghcr.io/art9762/scenarioforge/frontend`
+
+## License
+
+MIT — see `LICENSE` (Copyright Kulikov Artem).
+
 ## Environment
 
 Requires `.env` at project root (copy from `.env.example`). Key variable: `TRINITY_API_KEY`. The backend reads env via `pydantic-settings` in `backend/config.py`.
@@ -69,3 +92,4 @@ Requires `.env` at project root (copy from `.env.example`). Key variable: `TRINI
 - All Russian agent names in comments are intentional (Режиссёр, Сценарист, etc.).
 - Use `datetime.now(timezone.utc)` (not deprecated `utcnow()`).
 - Use pydantic `model_config = {...}` dict (not deprecated `class Config`).
+- Default branch is `master` (not main). CI workflows trigger on `master`.
