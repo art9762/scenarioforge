@@ -1,12 +1,14 @@
-"""Database session management using SQLAlchemy async with SQLite."""
+"""Database session management using SQLAlchemy async."""
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 
 from backend.config import settings
 
-DATABASE_URL = settings.database_url
+engine_kwargs: dict = {"echo": False}
+if settings.database_url.startswith("postgresql"):
+    engine_kwargs.update(pool_size=5, max_overflow=10)
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+engine = create_async_engine(settings.database_url, **engine_kwargs)
 
 async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 

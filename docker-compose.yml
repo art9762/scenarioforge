@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: scenarioforge
+      POSTGRES_USER: scenarioforge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scenarioforge-dev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scenarioforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://scenarioforge:${POSTGRES_PASSWORD:-scenarioforge-dev}@postgres:5432/scenarioforge
+      AUTH_ENABLED: "true"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      TRINITY_API_KEY: ${TRINITY_API_KEY:?TRINITY_API_KEY must be set}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost,http://localhost:80}
+      STORAGE_DIR: /app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - backend-data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/config/models')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  backend-data:

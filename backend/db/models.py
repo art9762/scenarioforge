@@ -29,12 +29,40 @@ class User(Base):
     usage_records = relationship("UsageRecord", back_populates="user", cascade="all, delete-orphan")
 
 
+class Team(Base):
+    __tablename__ = "teams"
+
+    id: str = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: str = Column(String(255), nullable=False)
+    slug: str = Column(String(100), unique=True, nullable=False, index=True)
+    credits: int = Column(Integer, default=0, nullable=False)
+    created_by: str = Column(String(36), ForeignKey("users.id"), nullable=False)
+    created_at: datetime = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    members = relationship("TeamMember", back_populates="team", cascade="all, delete-orphan")
+    projects = relationship("ProjectRecord", back_populates="team")
+
+
+class TeamMember(Base):
+    __tablename__ = "team_members"
+
+    id: str = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    team_id: str = Column(String(36), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: str = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    role: str = Column(String(20), nullable=False)  # owner, editor, viewer
+    joined_at: datetime = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    team = relationship("Team", back_populates="members")
+    user = relationship("User")
+
+
 class ProjectRecord(Base):
     """Project metadata in DB. Actual content (scenario, agents, revisions) stays on filesystem."""
     __tablename__ = "projects"
 
     id: str = Column(String(36), primary_key=True)
     user_id: str = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    team_id: str = Column(String(36), ForeignKey("teams.id", ondelete="SET NULL"), nullable=True, index=True)
     idea: str = Column(Text, nullable=False)
     type: str = Column(String(50), nullable=False)
     status: str = Column(String(50), default="created", nullable=False)
@@ -43,6 +71,7 @@ class ProjectRecord(Base):
     updated_at: datetime = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     user = relationship("User", back_populates="projects")
+    team = relationship("Team", back_populates="projects")
 
 
 class UsageRecord(Base):
@@ -81,4 +110,14 @@ class CreditCode(Base):
     created_by: str = Column(String(36), ForeignKey("users.id"), nullable=False)
     used_by: str = Column(String(36), ForeignKey("users.id"), nullable=True)
     used_at: datetime = Column(DateTime(timezone=True), nullable=True)
+    created_at: datetime = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    user_id: str = Column(String(36), ForeignKey("users.id"), nullable=True)
+    action: str = Column(String(50), nullable=False)
+    details: str = Column(Text, nullable=True)
     created_at: datetime = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

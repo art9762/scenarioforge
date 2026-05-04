@@ -12,12 +12,12 @@ class ProjectType(str, Enum):
 
 
 class Equipment(BaseModel):
-    camera: str = ""
-    lenses: str = ""
-    lighting: str = ""
-    audio: str = ""
-    locations: str = ""
-    special: str = ""
+    camera: str = Field(default="", max_length=500)
+    lenses: str = Field(default="", max_length=500)
+    lighting: str = Field(default="", max_length=500)
+    audio: str = Field(default="", max_length=500)
+    locations: str = Field(default="", max_length=1000)
+    special: str = Field(default="", max_length=1000)
 
 
 class ProjectStatus(str, Enum):
@@ -51,7 +51,7 @@ class Project(BaseModel):
 
 
 class ProjectCreate(BaseModel):
-    idea: str
+    idea: str = Field(max_length=5000)
     type: ProjectType
     equipment: Equipment = Field(default_factory=Equipment)
 
@@ -65,8 +65,8 @@ class GenerateRequest(BaseModel):
 
 class ReviseRequest(BaseModel):
     scene_number: Optional[int] = None
-    agent: str = "editor"
-    instructions: str = ""
+    agent: str = Field(default="editor", max_length=50)
+    instructions: str = Field(default="", max_length=5000)
 
 
 class BriefAnswers(BaseModel):
@@ -74,4 +74,4 @@ class BriefAnswers(BaseModel):
 
 
 class ScenarioUpdate(BaseModel):
-    scenario: str
+    scenario: str = Field(max_length=500_000)

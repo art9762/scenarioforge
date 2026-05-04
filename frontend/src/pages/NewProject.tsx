@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
+import { useTeams } from '../contexts/TeamContext'
 
 const PROJECT_TYPES = [
   { value: 'youtube', label: 'YouTube видео' },
@@ -10,6 +11,7 @@ const PROJECT_TYPES = [
 
 export default function NewProject() {
   const navigate = useNavigate()
+  const { currentTeam } = useTeams()
   const [idea, setIdea] = useState('')
   const [type, setType] = useState('youtube')
   const [equipment, setEquipment] = useState({
@@ -27,7 +29,7 @@ export default function NewProject() {
     if (!idea.trim()) return
     setSubmitting(true)
     try {
-      const project = await api.createProject({ idea, type, equipment })
+      const project = await api.createProject({ idea, type, equipment, team_slug: currentTeam?.slug })
       navigate(`/projects/${project.id}/briefing`)
     } catch {
       alert('Ошибка создания проекта')
@@ -39,6 +41,11 @@ export default function NewProject() {
   return (
     <div className="max-w-2xl mx-auto">
       <h1 className="text-2xl font-bold mb-6">Новый проект</h1>
+      {currentTeam && (
+        <p className="text-sm text-text-secondary mb-4">
+          Проект будет создан в команде <span className="text-accent">{currentTeam.name}</span>
+        </p>
+      )}
       <form onSubmit={handleSubmit} className="space-y-6">
         <div>
           <label className="block text-sm text-text-secondary mb-2">Идея сценария</label>

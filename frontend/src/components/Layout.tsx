@@ -1,20 +1,25 @@
-import { Outlet, Link, useLocation } from 'react-router-dom'
-import { useEffect, useState } from 'react'
-import { api } from '../api/client'
+import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
+import { useAuth } from '../contexts/AuthContext'
+import TeamSelector from './TeamSelector'
 
 export default function Layout() {
   const location = useLocation()
-  const [isAdmin, setIsAdmin] = useState(false)
-  const [credits, setCredits] = useState<number | null>(null)
+  const navigate = useNavigate()
+  const { user, authEnabled, logout } = useAuth()
 
-  useEffect(() => {
-    api.getMe().then((data) => {
-      if (data.auth_enabled && data.user_id) {
-        setIsAdmin(!!data.is_admin)
-        setCredits(data.credits ?? null)
-      }
-    }).catch(() => {})
-  }, [location.pathname])
+  const handleLogout = () => {
+    logout()
+    navigate('/login', { replace: true })
+  }
+
+  const navLink = (to: string, label: string) => (
+    <Link
+      to={to}
+      className={`no-underline ${location.pathname === to ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}
+    >
+      {label}
+    </Link>
+  )
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -23,27 +28,28 @@ export default function Layout() {
           ScenarioForge
         </Link>
         <nav className="flex gap-4 text-sm items-center">
-          <Link to="/" className={`no-underline ${location.pathname === '/' ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}>
-            Проекты
-          </Link>
-          <Link to="/new" className={`no-underline ${location.pathname === '/new' ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}>
-            Новый
-          </Link>
-          <Link to="/settings" className={`no-underline ${location.pathname === '/settings' ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}>
-            Настройки
-          </Link>
-          <Link to="/test" className={`no-underline ${location.pathname === '/test' ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}>
-            Тест
-          </Link>
-          {isAdmin && (
-            <Link to="/admin" className={`no-underline ${location.pathname === '/admin' ? 'text-accent' : 'text-text-secondary hover:text-text-primary'}`}>
-              👑 Админ
-            </Link>
-          )}
-          {credits !== null && (
+          {authEnabled && user && <TeamSelector />}
+          {navLink('/', 'Проекты')}
+          {navLink('/new', 'Новый')}
+          {authEnabled && user && navLink('/teams', 'Команды')}
+          {navLink('/settings', 'Настройки')}
+          {navLink('/test', 'Тест')}
+          {user?.is_admin && navLink('/admin', 'Админ')}
+          {user && (
             <span className="text-text-secondary ml-2 border border-bg-tertiary rounded px-2 py-0.5 text-xs">
-              💎 {credits}
+              {user.credits} кр.
             </span>
+          )}
+          {authEnabled && user && (
+            <div className="flex items-center gap-2 ml-2">
+              <span className="text-text-secondary text-xs">{user.display_name || user.email}</span>
+              <button
+                onClick={handleLogout}
+                className="text-text-secondary hover:text-red-400 text-xs cursor-pointer"
+              >
+                Выйти
+              </button>
+            </div>
           )}
         </nav>
       </header>

@@ -1,4 +1,4 @@
-import type { Project, BriefingQuestion, PipelineStatus, Scenario, DepthMode, ModelConfig, AgentResult, Revision, ChatMessage } from '../types'
+import type { Project, BriefingQuestion, PipelineStatus, Scenario, DepthMode, ModelConfig, AgentResult, Revision, ChatMessage, Team, TeamDetail } from '../types'
 
 interface AdminUser {
   id: string
@@ -36,10 +36,29 @@ interface CreditCode {
 interface AdminStats {
   users: number
   projects: number
+  teams: number
   total_generations: number
   invite_codes: { used: number; total: number }
   credit_codes: { used: number; total: number }
   tokens: { total: number; input: number; output: number }
+}
+
+interface AdminTeam {
+  id: string
+  name: string
+  slug: string
+  credits: number
+  members_count: number
+  created_by_email: string | null
+  created_at: string
+}
+
+interface AuditEntry {
+  id: number
+  user_email: string | null
+  action: string
+  details: Record<string, unknown> | null
+  created_at: string
 }
 
 const BASE = '/api'
@@ -51,20 +70,61 @@ function getAuthHeaders(): Record<string, string> {
   return headers
 }
 
+let isRefreshing = false
+let refreshPromise: Promise<boolean> | null = null
+
+async function tryRefreshToken(): Promise<boolean> {
+  const refreshToken = localStorage.getItem('refresh_token')
+  if (!refreshToken) return false
+  try {
+    const res = await fetch(`${BASE}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    })
+    if (!res.ok) return false
+    const data = await res.json()
+    localStorage.setItem('access_token', data.access_token)
+    localStorage.setItem('refresh_token', data.refresh_token)
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: getAuthHeaders(),
     ...options,
   })
+  if (res.status === 401 && !path.includes('/auth/')) {
+    if (!isRefreshing) {
+      isRefreshing = true
+      refreshPromise = tryRefreshToken().finally(() => { isRefreshing = false })
+    }
+    const refreshed = await refreshPromise
+    if (refreshed) {
+      const retry = await fetch(`${BASE}${path}`, {
+        headers: getAuthHeaders(),
+        ...options,
+      })
+      if (!retry.ok) throw new Error(`API error: ${retry.status}`)
+      return retry.json()
+    }
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('refresh_token')
+    window.location.href = '/login'
+    throw new Error('Session expired')
+  }
   if (!res.ok) throw new Error(`API error: ${res.status}`)
   return res.json()
 }
 
 export const api = {
   // Projects
-  listProjects: () => request<Project[]>('/projects'),
+  listProjects: (teamSlug?: string) => request<Project[]>(teamSlug ? `/projects?team=${teamSlug}` : '/projects'),
   getProject: (id: string) => request<Project>(`/projects/${id}`),
-  createProject: (data: { idea: string; type: string; equipment: Record<string, string> }) =>
+  createProject: (data: { idea: string; type: string; equipment: Record<string, string>; team_slug?: string }) =>
     request<Project>('/projects', { method: 'POST', body: JSON.stringify(data) }),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, { method: 'DELETE' }),
 
@@ -127,12 +187,16 @@ export const api = {
   register: (email: string, password: string, invite_code: string, display_name?: string) =>
     request<{ access_token: string; refresh_token: string; user_id: string; email: string; display_name: string }>('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, invite_code, display_name }) }),
   getMe: () => request<{ user_id?: string; email?: string; display_name?: string; is_admin?: boolean; credits?: number; auth_enabled: boolean }>('/auth/me'),
+  validateInviteCode: (code: string) =>
+    request<{ valid: boolean }>('/auth/validate-code', { method: 'POST', body: JSON.stringify({ code }) }),
+  refreshTokens: (refreshToken: string) =>
+    request<{ access_token: string; refresh_token: string; user_id: string; email: string; display_name: string }>('/auth/refresh', { method: 'POST', body: JSON.stringify({ refresh_token: refreshToken }) }),
   redeemCode: (code: string) =>
     request<{ credits: number; added: number }>('/auth/redeem', { method: 'POST', body: JSON.stringify({ code }) }),
 
   // Admin
   adminListUsers: () => request<AdminUser[]>('/admin/users'),
-  adminUpdateUser: (id: string, data: { credits?: number; is_active?: boolean; is_admin?: boolean }) =>
+  adminUpdateUser: (id: string, data: { credits?: number; is_active?: boolean; is_admin?: boolean; tier?: string }) =>
     request<AdminUser>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   adminGenerateInviteCodes: (count: number) =>
     request<{ codes: string[] }>('/admin/invite-codes', { method: 'POST', body: JSON.stringify({ count }) }),
@@ -141,6 +205,35 @@ export const api = {
     request<{ codes: CreditCode[] }>('/admin/credit-codes', { method: 'POST', body: JSON.stringify({ count, amount }) }),
   adminListCreditCodes: () => request<CreditCode[]>('/admin/credit-codes'),
   adminGetStats: () => request<AdminStats>('/admin/stats'),
+  adminListTeams: () => request<AdminTeam[]>('/admin/teams'),
+  adminUpdateTeam: (id: string, data: { credits?: number }) =>
+    request<{ status: string; credits: number }>(`/admin/teams/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  adminDeleteTeam: (id: string) =>
+    request<{ status: string }>(`/admin/teams/${id}`, { method: 'DELETE' }),
+  adminGetActivity: (limit: number = 50, offset: number = 0) =>
+    request<AuditEntry[]>(`/admin/activity?limit=${limit}&offset=${offset}`),
+
+  // Teams
+  listTeams: () => request<Team[]>('/teams'),
+  getTeam: (slug: string) => request<TeamDetail>(`/teams/${slug}`),
+  createTeam: (name: string) =>
+    request<Team>('/teams', { method: 'POST', body: JSON.stringify({ name }) }),
+  updateTeam: (slug: string, name: string) =>
+    request<{ id: string; name: string; slug: string }>(`/teams/${slug}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+  deleteTeam: (slug: string) =>
+    request<{ status: string }>(`/teams/${slug}`, { method: 'DELETE' }),
+  addTeamMember: (slug: string, email: string, role: string = 'editor') =>
+    request<{ id: string; user_id: string; email: string; display_name: string; role: string }>(`/teams/${slug}/members`, { method: 'POST', body: JSON.stringify({ email, role }) }),
+  updateTeamMember: (slug: string, userId: string, role: string) =>
+    request<{ status: string; role: string }>(`/teams/${slug}/members/${userId}`, { method: 'PATCH', body: JSON.stringify({ role }) }),
+  removeTeamMember: (slug: string, userId: string) =>
+    request<{ status: string }>(`/teams/${slug}/members/${userId}`, { method: 'DELETE' }),
+  leaveTeam: (slug: string) =>
+    request<{ status: string }>(`/teams/${slug}/leave`, { method: 'POST' }),
+  transferCredits: (slug: string, amount: number) =>
+    request<{ user_credits: number; team_credits: number }>(`/teams/${slug}/transfer-credits`, { method: 'POST', body: JSON.stringify({ amount }) }),
+  redeemOnTeam: (slug: string, code: string) =>
+    request<{ team_credits: number; added: number }>(`/teams/${slug}/redeem`, { method: 'POST', body: JSON.stringify({ code }) }),
 
   // SSE stream
   streamStatus: (id: string): EventSource => {
