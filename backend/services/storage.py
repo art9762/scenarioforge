@@ -15,6 +15,7 @@ Each project stored as:
 """
 
 import asyncio
+import collections
 import json
 import os
 import shutil
@@ -31,15 +32,22 @@ from backend.models.project import Project
 class StorageService:
     """Directory-based storage for projects with atomic writes and locking."""
 
+    MAX_LOCKS = 1024
+
     def __init__(self):
         self._base_dir = settings.storage_dir
         os.makedirs(self._base_dir, exist_ok=True)
-        self._locks: dict[str, asyncio.Lock] = {}
+        self._locks: collections.OrderedDict[str, asyncio.Lock] = collections.OrderedDict()
 
     def _get_lock(self, project_id: str) -> asyncio.Lock:
-        if project_id not in self._locks:
-            self._locks[project_id] = asyncio.Lock()
-        return self._locks[project_id]
+        if project_id in self._locks:
+            self._locks.move_to_end(project_id)
+            return self._locks[project_id]
+        lock = asyncio.Lock()
+        self._locks[project_id] = lock
+        while len(self._locks) > self.MAX_LOCKS:
+            self._locks.popitem(last=False)
+        return lock
 
     def _project_dir(self, project_id: str) -> str:
         return os.path.join(self._base_dir, project_id)
@@ -275,7 +283,7 @@ class StorageService:
         rev_dir = os.path.join(self._project_dir(project_id), "revisions")
         os.makedirs(rev_dir, exist_ok=True)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        filename = f"{ts}_{source}.md"
+        filename = f"{ts}--{source}.md"
         await self._atomic_write(os.path.join(rev_dir, filename), scenario)
         return filename
 
@@ -287,12 +295,24 @@ class StorageService:
         revisions = []
         for fname in sorted(os.listdir(rev_dir), reverse=True):
             if fname.endswith(".md"):
-                parts = fname[:-3].split("_", 2)
+                name = fname[:-3]
+                # New format: {date}_{time}--{source}.md
+                if "--" in name:
+                    ts_part, source = name.split("--", 1)
+                    ts_parts = ts_part.split("_", 1)
+                    date = ts_parts[0] if len(ts_parts) >= 1 else ""
+                    time = ts_parts[1] if len(ts_parts) >= 2 else ""
+                else:
+                    # Legacy format: {date}_{time}_{source}.md
+                    parts = name.split("_", 2)
+                    date = parts[0] if len(parts) >= 1 else ""
+                    time = parts[1] if len(parts) >= 2 else ""
+                    source = parts[2] if len(parts) >= 3 else "unknown"
                 revisions.append({
                     "filename": fname,
-                    "date": parts[0] if len(parts) >= 1 else "",
-                    "time": parts[1] if len(parts) >= 2 else "",
-                    "source": parts[2] if len(parts) >= 3 else "unknown",
+                    "date": date,
+                    "time": time,
+                    "source": source,
                 })
         return revisions
 
