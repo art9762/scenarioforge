@@ -18,7 +18,6 @@ const STATUS_LABELS: Record<string, string> = {
   answers_submitted: 'Готов к генерации',
   generating: 'Генерация...',
   completed: 'Готов',
-  done: 'Готов',
   error: 'Ошибка',
   stopped: 'Остановлен',
 }
@@ -26,7 +25,6 @@ const STATUS_LABELS: Record<string, string> = {
 function projectRoute(p: Project): string {
   switch (p.status) {
     case 'completed':
-    case 'done':
       return `/projects/${p.id}/scenario`
     case 'generating':
       return `/projects/${p.id}/generation`
