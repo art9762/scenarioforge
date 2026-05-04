@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/scenarioforge.db"
     admin_email: str = "admin@scenarioforge.local"
     admin_password: str = "admin"
+    allowed_origins: str = "*"
 
     model_config = {"env_file": str(PROJECT_ROOT / ".env")}
 

@@ -2,13 +2,14 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, EmailStr
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.jwt import create_access_token, create_refresh_token, verify_token
 from backend.auth.deps import get_current_user
+from backend.auth.limiter import limiter
 from backend.auth.passwords import hash_password, verify_password
 from backend.db.models import User, InviteCode, CreditCode, AuditLog
 from backend.db.session import get_db
@@ -20,14 +21,14 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str
-    display_name: str = ""
-    invite_code: str
+    password: str = Field(min_length=8, max_length=128)
+    display_name: str = Field(default="", max_length=255)
+    invite_code: str = Field(max_length=32)
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(max_length=128)
 
 
 class TokenResponse(BaseModel):
@@ -46,7 +47,8 @@ class RefreshRequest(BaseModel):
 # --- Routes ---
 
 @router.post("/register", response_model=TokenResponse)
-async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def register(request: Request, data: RegisterRequest, db: AsyncSession = Depends(get_db)):
     # Validate invite code
     result = await db.execute(select(InviteCode).where(InviteCode.code == data.invite_code, InviteCode.used_by == None))
     invite = result.scalar_one_or_none()
@@ -84,7 +86,8 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def login(request: Request, data: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
 
@@ -146,7 +149,7 @@ async def get_me(
 
 
 class ValidateCodeRequest(BaseModel):
-    code: str
+    code: str = Field(max_length=32)
 
 
 @router.post("/validate-code")
@@ -160,7 +163,7 @@ async def validate_invite_code(data: ValidateCodeRequest, db: AsyncSession = Dep
 
 
 class RedeemRequest(BaseModel):
-    code: str
+    code: str = Field(max_length=32)
 
 
 @router.post("/redeem")

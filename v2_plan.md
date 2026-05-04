@@ -495,10 +495,10 @@ class AuditLog(Base):
 Фаза 3.3  Аудит-лог                        ✅
 ─── Фаза 3: админ-панель полная ✅ ───
 
-Фаза 4.1  PostgreSQL
-Фаза 4.2  Безопасность
-Фаза 4.3  Тесты
-─── Фаза 4: production-ready ───
+Фаза 4.1  PostgreSQL                       ✅
+Фаза 4.2  Безопасность                     ✅
+Фаза 4.3  Тесты                            ✅
+─── Фаза 4: production-ready ✅ ───
 ```
 
 ## Количество файлов по фазам
@@ -535,8 +535,11 @@ class AuditLog(Base):
 - [x] Изменение кредитов юзера/команды через админку
 - [x] Аудит-лог показывает последние действия
 
-### Фаза 4
-- [ ] PostgreSQL через docker-compose работает
-- [ ] Alembic миграции: upgrade + downgrade
-- [ ] Тесты покрывают auth, teams, credits, isolation
-- [ ] Rate limiting на login (5/мин)
+### Фаза 4 ✅ (выполнено 2026-05-04)
+- [x] PostgreSQL через docker-compose работает
+- [x] Alembic миграции: upgrade + downgrade
+- [x] Тесты покрывают auth, teams, credits, isolation (35 новых тестов)
+- [x] Rate limiting на login/register (5/мин)
+- [x] CORS: настраиваемые allowed_origins через env
+- [x] JWT secret: предупреждение при использовании дефолтного ключа
+- [x] Input validation: max_length на всех Pydantic-схемах

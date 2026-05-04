@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -28,20 +28,20 @@ def _slugify(name: str) -> str:
 # --- Schemas ---
 
 class CreateTeamRequest(BaseModel):
-    name: str
+    name: str = Field(max_length=255)
 
 
 class UpdateTeamRequest(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=255)
 
 
 class AddMemberRequest(BaseModel):
-    email: str
-    role: str = "editor"
+    email: str = Field(max_length=255)
+    role: str = Field(default="editor", max_length=20)
 
 
 class UpdateMemberRequest(BaseModel):
-    role: str
+    role: str = Field(max_length=20)
 
 
 class TransferCreditsRequest(BaseModel):
@@ -49,7 +49,7 @@ class TransferCreditsRequest(BaseModel):
 
 
 class RedeemOnTeamRequest(BaseModel):
-    code: str
+    code: str = Field(max_length=32)
 
 
 # --- Helpers ---

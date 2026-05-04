@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -7,9 +8,11 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import AsyncGenerator, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger("scenarioforge")
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -49,6 +52,11 @@ async def _run_alembic_upgrade():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _run_alembic_upgrade()
+    if settings.auth_enabled and settings.jwt_secret == "dev-secret-change-me":
+        logger.warning(
+            "AUTH_ENABLED=true but JWT_SECRET is the default 'dev-secret-change-me'. "
+            "Set a strong JWT_SECRET environment variable for production."
+        )
     await _ensure_admin()
     # Auto-migrate legacy projects on startup
     migrated = await storage.migrate_all_legacy()
@@ -86,9 +94,17 @@ app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(teams_router)
 
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from backend.auth.limiter import limiter
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+_origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -462,8 +478,8 @@ async def get_revision(
 # --- Agent Chat ---
 
 class ChatMessage(BaseModel):
-    message: str
-    context_fragment: Optional[str] = None
+    message: str = Field(max_length=10000)
+    context_fragment: Optional[str] = Field(default=None, max_length=50000)
 
 
 @app.post("/api/projects/{project_id}/chat/{agent_name}")
@@ -541,9 +557,9 @@ async def clear_chat_history(
 # --- Ask about fragment ---
 
 class AskRequest(BaseModel):
-    question: str
-    fragment: str
-    agent: str = "director"
+    question: str = Field(max_length=5000)
+    fragment: str = Field(max_length=50000)
+    agent: str = Field(default="director", max_length=50)
 
 
 @app.post("/api/projects/{project_id}/ask")
