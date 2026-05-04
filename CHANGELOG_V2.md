@@ -84,3 +84,75 @@
 | Удалять команду | + | - | - |
 | Переводить кредиты | + | + | + |
 | Активировать кредит-код на команду | + | - | - |
+
+---
+
+## Фаза 3: Расширение админ-панели (2026-05-04)
+
+### Backend (`backend/admin/routes.py`)
+- **Управление командами** — `GET /api/admin/teams`, `PATCH /api/admin/teams/{id}` (кредиты), `DELETE /api/admin/teams/{id}`
+- **Лог активности** — `GET /api/admin/activity?limit=50&offset=0` (пагинация)
+- **Аудит-трейл** — `AuditLog` записи на все значимые действия: login, register, generate, admin_update_user, admin_update_team, admin_delete_team, redeem_credit
+
+### Frontend (`frontend/src/pages/Admin.tsx`)
+- **Вкладка «Команды»** — таблица с редактированием кредитов и удалением
+- **Вкладка «Активность»** — лог действий с пагинацией «Загрузить ещё»
+- **Поиск юзеров** — фильтрация по email / имени
+- **Статистика** — счётчик команд и токенов (input/output) в шапке
+
+---
+
+## Фаза 4: PostgreSQL, security hardening, тесты (2026-05-04)
+
+### PostgreSQL
+- **`backend/db/session.py`** — автоматический выбор драйвера: `asyncpg` для PostgreSQL, `aiosqlite` для SQLite
+- **`backend/config.py`** — `database_url` по умолчанию SQLite, переключается на PostgreSQL через env `DATABASE_URL`
+- **`docker-compose.yml`** — PostgreSQL 16-alpine с healthcheck, persistent volume
+
+### Docker
+- **Backend healthcheck** — `GET /api/config/models` с `start_period: 30s`
+- **Frontend** — `depends_on: backend: condition: service_healthy` (ждёт backend)
+- **Обязательные env** — `JWT_SECRET`, `TRINITY_API_KEY`, `ADMIN_PASSWORD` с `${VAR:?error}` (compose падает если не заданы)
+
+### Alembic миграции
+- `1883bb2a1cda_initial_schema.py` — users, project_records, invite_codes, credit_codes, usage_records
+- `651c4b372d84_add_audit_log.py` — таблица audit_log
+- `cb8c1a0290fc_add_teams_and_team_members.py` — teams, team_members, projects.team_id
+
+### Тесты (`backend/tests/`)
+| Файл | Кол-во | Что покрывает |
+|------|--------|---------------|
+| `test_agents.py` | 6 | Системные промпты, вызов LLM |
+| `test_api.py` | 8 | CRUD проектов, экспорт, конфиг |
+| `test_auth_endpoints.py` | 15 | Регистрация, логин, refresh, redeem, 401/403 |
+| `test_auth_passwords.py` | 2 | Bcrypt > 72 символов, без warnings |
+| `test_credits.py` | 6 | Перевод кредитов, redeem на команду/юзера, лимиты |
+| `test_isolation.py` | 6 | Изоляция проектов, командный доступ |
+| `test_pipeline.py` | 3 | Бриф, генерация (fast), стоп |
+| `test_startup.py` | 1 | Импорт из рабочей директории |
+| `test_teams_endpoints.py` | 7 | CRUD команд, роли, удаление |
+| **Итого** | **56 passed** | |
+
+---
+
+## Финальный security-фикс (2026-05-04)
+
+### Критические исправления
+| Проблема | Файл | Решение |
+|----------|------|---------|
+| SSE stream без авторизации | `main.py:641` | `get_current_user` вместо `get_current_user_optional` |
+| `/api/admin/migrate` без auth | `main.py:763` | Добавлена проверка `is_admin` |
+| Path traversal через `agent_name` | `main.py:457` | Валидация `agent_name in AGENTS` |
+| Блокирующий Alembic в async startup | `main.py:47` | `run_in_executor` |
+| Race condition при списании кредитов | `main.py:335`, `teams/routes.py:362` | `SELECT ... FOR UPDATE` |
+| Rate limiter за proxy видит IP контейнера | `auth/limiter.py` | `X-Forwarded-For` / `X-Real-IP` |
+| `python-jose` deprecated `utcnow()` warnings | `auth/jwt.py`, `requirements.txt` | Замена на `PyJWT 2.9.0` |
+| Нет audit log при redeem credits | `auth/routes.py` | Добавлен `AuditLog` + `commit()` |
+| `JWT_SECRET` молча пустой в docker | `docker-compose.yml` | `${JWT_SECRET:?...}` |
+| Нет предупреждения о дефолтном admin пароле | `main.py` | Startup warning |
+| Нет healthcheck у backend | `docker-compose.yml` | HTTP healthcheck + frontend ждёт |
+
+### Lint cleanup (frontend)
+- `AuthContext.tsx` — устранён recursive self-call, fast-refresh warning, setState-in-effect
+- `Admin.tsx` — удалён неиспользуемый `loadData`, инлайновый fetch в effect с cleanup
+- `ProjectList.tsx` — `useCallback` для `fetchProjects`, добавлен в deps
