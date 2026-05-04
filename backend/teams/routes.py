@@ -359,13 +359,20 @@ async def transfer_credits(
     team = await _get_team_by_slug(slug, db)
     await _get_membership(team, user.id)
 
-    if user.credits < data.amount:
+    locked_user = (await db.execute(
+        select(User).where(User.id == user.id).with_for_update()
+    )).scalar_one()
+    locked_team = (await db.execute(
+        select(Team).where(Team.id == team.id).with_for_update()
+    )).scalar_one()
+
+    if locked_user.credits < data.amount:
         raise HTTPException(status_code=400, detail="Insufficient personal credits")
 
-    user.credits -= data.amount
-    team.credits += data.amount
+    locked_user.credits -= data.amount
+    locked_team.credits += data.amount
 
-    return {"user_credits": user.credits, "team_credits": team.credits}
+    return {"user_credits": locked_user.credits, "team_credits": locked_team.credits}
 
 
 @router.post("/{slug}/redeem")

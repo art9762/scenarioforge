@@ -23,6 +23,7 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null)
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth(): AuthState {
   const ctx = useContext(AuthContext)
   if (!ctx) throw new Error('useAuth must be used within AuthProvider')
@@ -35,7 +36,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   const refreshUser = useCallback(async () => {
-    try {
+    const fetchMe = async (): Promise<void> => {
       const data = await api.getMe()
       setAuthEnabled(data.auth_enabled)
       if (data.auth_enabled && data.user_id) {
@@ -47,11 +48,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           credits: data.credits ?? 0,
           tier: (data as Record<string, unknown>).tier as string ?? 'free',
         })
-      } else if (!data.auth_enabled) {
-        setUser(null)
       } else {
         setUser(null)
       }
+    }
+
+    try {
+      await fetchMe()
     } catch {
       const refreshToken = localStorage.getItem('refresh_token')
       if (refreshToken) {
@@ -59,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const tokens = await api.refreshTokens(refreshToken)
           localStorage.setItem('access_token', tokens.access_token)
           localStorage.setItem('refresh_token', tokens.refresh_token)
-          await refreshUser()
+          await fetchMe()
           return
         } catch {
           localStorage.removeItem('access_token')
@@ -71,8 +74,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    refreshUser().finally(() => setLoading(false))
-  }, [refreshUser])
+    let cancelled = false
+    api.getMe().then(data => {
+      if (cancelled) return
+      setAuthEnabled(data.auth_enabled)
+      if (data.auth_enabled && data.user_id) {
+        setUser({
+          user_id: data.user_id,
+          email: data.email ?? '',
+          display_name: data.display_name ?? '',
+          is_admin: data.is_admin ?? false,
+          credits: data.credits ?? 0,
+          tier: (data as Record<string, unknown>).tier as string ?? 'free',
+        })
+      }
+    }).catch(() => {
+      if (!cancelled) setUser(null)
+    }).finally(() => {
+      if (!cancelled) setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [])
 
   const login = useCallback(async (email: string, password: string) => {
     const data = await api.login(email, password)

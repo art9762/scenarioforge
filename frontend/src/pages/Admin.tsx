@@ -73,25 +73,6 @@ export default function Admin() {
   const [activityOffset, setActivityOffset] = useState(0)
   const [hasMoreActivity, setHasMoreActivity] = useState(true)
 
-  const loadData = async () => {
-    try {
-      const [u, i, c, s, t] = await Promise.all([
-        api.adminListUsers(),
-        api.adminListInviteCodes(),
-        api.adminListCreditCodes(),
-        api.adminGetStats(),
-        api.adminListTeams(),
-      ])
-      setUsers(u)
-      setInviteCodes(i)
-      setCreditCodes(c)
-      setStats(s)
-      setTeams(t)
-    } catch {
-      // ignore
-    }
-  }
-
   const loadActivity = async (offset = 0) => {
     try {
       const entries = await api.adminGetActivity(50, offset)
@@ -108,9 +89,29 @@ export default function Admin() {
   }
 
   useEffect(() => {
-    loadData()
-    loadActivity()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    let cancelled = false
+    Promise.all([
+      api.adminListUsers(),
+      api.adminListInviteCodes(),
+      api.adminListCreditCodes(),
+      api.adminGetStats(),
+      api.adminListTeams(),
+    ]).then(([u, i, c, s, t]) => {
+      if (cancelled) return
+      setUsers(u)
+      setInviteCodes(i)
+      setCreditCodes(c)
+      setStats(s)
+      setTeams(t)
+    }).catch(() => {})
+    api.adminGetActivity(50, 0).then(entries => {
+      if (cancelled) return
+      setActivity(entries)
+      setHasMoreActivity(entries.length === 50)
+      setActivityOffset(entries.length)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   const filteredUsers = useMemo(() => {
     if (!userSearch) return users

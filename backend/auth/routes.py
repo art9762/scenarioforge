@@ -186,4 +186,7 @@ async def redeem_credit_code(
     credit_code.used_at = datetime.now(timezone.utc)
     user.credits += credit_code.amount
 
+    db.add(AuditLog(user_id=user.id, action="redeem_credit", details=f'{{"code":"{credit_code.code}","amount":{credit_code.amount}}}'))
+    await db.commit()
+
     return {"credits": user.credits, "added": credit_code.amount}

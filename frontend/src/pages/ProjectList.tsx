@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import type { Project } from '../types'
@@ -42,9 +42,9 @@ export default function ProjectList() {
   const intervalRef = useRef<number>(0)
   const { currentTeam } = useTeams()
 
-  const fetchProjects = () => {
+  const fetchProjects = useCallback(() => {
     api.listProjects(currentTeam?.slug).then(setProjects).catch(() => {})
-  }
+  }, [currentTeam?.slug])
 
   useEffect(() => {
     let cancelled = false
@@ -55,7 +55,6 @@ export default function ProjectList() {
     return () => { cancelled = true }
   }, [currentTeam?.slug])
 
-  // Poll while any project is in an active state
   useEffect(() => {
     clearInterval(intervalRef.current)
     const hasActive = projects.some((p) => ACTIVE_STATUSES.includes(p.status))
@@ -63,7 +62,7 @@ export default function ProjectList() {
       intervalRef.current = window.setInterval(fetchProjects, 5000)
     }
     return () => clearInterval(intervalRef.current)
-  }, [projects])
+  }, [projects, fetchProjects])
 
   if (loading) return <Spinner label="Загрузка проектов..." />
 

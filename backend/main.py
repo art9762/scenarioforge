@@ -28,7 +28,7 @@ from backend.services.storage import storage
 from backend.services.export import export_service
 from backend.services.llm import llm_client
 from backend.pipeline.orchestrator import orchestrator, AGENTS
-from backend.auth.deps import get_current_user, get_current_user_optional
+from backend.auth.deps import get_current_user
 from backend.db.models import User as DBUser, ProjectRecord, Team, TeamMember, AuditLog
 from backend.db.session import init_db, get_db
 from backend.auth.routes import router as auth_router
@@ -44,7 +44,8 @@ async def _run_alembic_upgrade():
     if os.path.exists(alembic_ini):
         cfg = Config(alembic_ini)
         cfg.set_main_option("script_location", os.path.join(os.path.dirname(__file__), "alembic"))
-        command.upgrade(cfg, "head")
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: command.upgrade(cfg, "head"))
     else:
         await init_db()
 
@@ -52,10 +53,20 @@ async def _run_alembic_upgrade():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _run_alembic_upgrade()
+    if not settings.auth_enabled:
+        logger.warning(
+            "AUTH_ENABLED=false — all endpoints are publicly accessible with no access control. "
+            "Set AUTH_ENABLED=true for production."
+        )
     if settings.auth_enabled and settings.jwt_secret == "dev-secret-change-me":
         logger.warning(
             "AUTH_ENABLED=true but JWT_SECRET is the default 'dev-secret-change-me'. "
             "Set a strong JWT_SECRET environment variable for production."
+        )
+    if settings.admin_password == "admin":
+        logger.warning(
+            "ADMIN_PASSWORD is the default 'admin'. "
+            "Set a strong ADMIN_PASSWORD environment variable for production."
         )
     await _ensure_admin()
     # Auto-migrate legacy projects on startup
@@ -324,14 +335,19 @@ async def start_generation(
         )).scalar_one_or_none()
 
         if record and record.team_id:
-            team = await db.get(Team, record.team_id)
+            team = (await db.execute(
+                select(Team).where(Team.id == record.team_id).with_for_update()
+            )).scalar_one_or_none()
             if not team or team.credits <= 0:
                 raise HTTPException(status_code=403, detail="Insufficient team credits")
             team.credits -= 1
         else:
-            if user.credits <= 0:
+            locked_user = (await db.execute(
+                select(DBUser).where(DBUser.id == user.id).with_for_update()
+            )).scalar_one()
+            if locked_user.credits <= 0:
                 raise HTTPException(status_code=403, detail="Insufficient credits")
-            user.credits -= 1
+            locked_user.credits -= 1
 
         await record_generation(db, user.id)
         db.add(AuditLog(user_id=user.id, action="generate", details=json.dumps({"project_id": project_id, "depth_mode": data.depth_mode})))
@@ -441,6 +457,8 @@ async def get_agent_result(
     user: DBUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if agent_name not in AGENTS:
+        raise HTTPException(status_code=400, detail=f"Unknown agent: {agent_name}")
     await _check_project_access(project_id, user, db)
     result = await storage.get_agent_result(project_id, agent_name)
     if not result:
@@ -623,11 +641,10 @@ async def export_pdf(
 @app.get("/api/projects/{project_id}/stream")
 async def stream_status(
     project_id: str,
-    user: DBUser = Depends(get_current_user_optional),
+    user: DBUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if user is not None:
-        await _check_project_access(project_id, user, db)
+    await _check_project_access(project_id, user, db)
     async def event_generator() -> AsyncGenerator[str, None]:
         prev_status = None
         prev_agent = None
@@ -746,8 +763,12 @@ async def get_depth_modes():
 # --- Migration ---
 
 @app.post("/api/admin/migrate")
-async def migrate_legacy():
-    """Manually trigger migration of legacy projects."""
+async def migrate_legacy(
+    admin: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if admin is None or not admin.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
     count = await storage.migrate_all_legacy()
     return {"migrated": count}
 

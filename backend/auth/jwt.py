@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from jose import jwt, JWTError
+import jwt
 
 from backend.config import settings
 
@@ -40,5 +40,5 @@ def verify_token(token: str, token_type: str = "access") -> Optional[str]:
             return None
         user_id: str = payload.get("sub")
         return user_id
-    except JWTError:
+    except (jwt.InvalidTokenError, jwt.ExpiredSignatureError):
         return None
