@@ -111,3 +111,13 @@ class CreditCode(Base):
     used_by: str = Column(String(36), ForeignKey("users.id"), nullable=True)
     used_at: datetime = Column(DateTime(timezone=True), nullable=True)
     created_at: datetime = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    user_id: str = Column(String(36), ForeignKey("users.id"), nullable=True)
+    action: str = Column(String(50), nullable=False)
+    details: str = Column(Text, nullable=True)
+    created_at: datetime = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

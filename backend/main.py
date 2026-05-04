@@ -26,7 +26,7 @@ from backend.services.export import export_service
 from backend.services.llm import llm_client
 from backend.pipeline.orchestrator import orchestrator, AGENTS
 from backend.auth.deps import get_current_user, get_current_user_optional
-from backend.db.models import User as DBUser, ProjectRecord, Team, TeamMember
+from backend.db.models import User as DBUser, ProjectRecord, Team, TeamMember, AuditLog
 from backend.db.session import init_db, get_db
 from backend.auth.routes import router as auth_router
 from backend.admin.routes import router as admin_router
@@ -318,6 +318,7 @@ async def start_generation(
             user.credits -= 1
 
         await record_generation(db, user.id)
+        db.add(AuditLog(user_id=user.id, action="generate", details=json.dumps({"project_id": project_id, "depth_mode": data.depth_mode})))
 
     project.depth_mode = data.depth_mode
     project.model_overrides = data.model_overrides

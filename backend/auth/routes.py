@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.auth.jwt import create_access_token, create_refresh_token, verify_token
 from backend.auth.deps import get_current_user
 from backend.auth.passwords import hash_password, verify_password
-from backend.db.models import User, InviteCode, CreditCode
+from backend.db.models import User, InviteCode, CreditCode, AuditLog
 from backend.db.session import get_db
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -70,6 +70,8 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
     # Mark invite as used
     invite.used_by = user.id
     invite.used_at = datetime.now(timezone.utc)
+
+    db.add(AuditLog(user_id=user.id, action="register", details=f'{{"email":"{user.email}"}}'))
     await db.commit()
 
     return TokenResponse(
@@ -91,6 +93,9 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
 
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account disabled")
+
+    db.add(AuditLog(user_id=user.id, action="login"))
+    await db.commit()
 
     return TokenResponse(
         access_token=create_access_token(user.id),

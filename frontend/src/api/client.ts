@@ -36,10 +36,29 @@ interface CreditCode {
 interface AdminStats {
   users: number
   projects: number
+  teams: number
   total_generations: number
   invite_codes: { used: number; total: number }
   credit_codes: { used: number; total: number }
   tokens: { total: number; input: number; output: number }
+}
+
+interface AdminTeam {
+  id: string
+  name: string
+  slug: string
+  credits: number
+  members_count: number
+  created_by_email: string | null
+  created_at: string
+}
+
+interface AuditEntry {
+  id: number
+  user_email: string | null
+  action: string
+  details: Record<string, unknown> | null
+  created_at: string
 }
 
 const BASE = '/api'
@@ -177,7 +196,7 @@ export const api = {
 
   // Admin
   adminListUsers: () => request<AdminUser[]>('/admin/users'),
-  adminUpdateUser: (id: string, data: { credits?: number; is_active?: boolean; is_admin?: boolean }) =>
+  adminUpdateUser: (id: string, data: { credits?: number; is_active?: boolean; is_admin?: boolean; tier?: string }) =>
     request<AdminUser>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   adminGenerateInviteCodes: (count: number) =>
     request<{ codes: string[] }>('/admin/invite-codes', { method: 'POST', body: JSON.stringify({ count }) }),
@@ -186,6 +205,13 @@ export const api = {
     request<{ codes: CreditCode[] }>('/admin/credit-codes', { method: 'POST', body: JSON.stringify({ count, amount }) }),
   adminListCreditCodes: () => request<CreditCode[]>('/admin/credit-codes'),
   adminGetStats: () => request<AdminStats>('/admin/stats'),
+  adminListTeams: () => request<AdminTeam[]>('/admin/teams'),
+  adminUpdateTeam: (id: string, data: { credits?: number }) =>
+    request<{ status: string; credits: number }>(`/admin/teams/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  adminDeleteTeam: (id: string) =>
+    request<{ status: string }>(`/admin/teams/${id}`, { method: 'DELETE' }),
+  adminGetActivity: (limit: number = 50, offset: number = 0) =>
+    request<AuditEntry[]>(`/admin/activity?limit=${limit}&offset=${offset}`),
 
   // Teams
   listTeams: () => request<Team[]>('/teams'),
