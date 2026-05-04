@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import type { Project } from '../types'
+import { useTeams } from '../contexts/TeamContext'
 import Spinner from '../components/Spinner'
 
 const TYPE_LABELS: Record<string, string> = {
@@ -39,14 +40,20 @@ export default function ProjectList() {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const intervalRef = useRef<number>(0)
+  const { currentTeam } = useTeams()
 
   const fetchProjects = () => {
-    api.listProjects().then(setProjects).catch(() => {})
+    api.listProjects(currentTeam?.slug).then(setProjects).catch(() => {})
   }
 
   useEffect(() => {
-    api.listProjects().then(setProjects).catch(() => setProjects([])).finally(() => setLoading(false))
-  }, [])
+    let cancelled = false
+    api.listProjects(currentTeam?.slug)
+      .then(data => { if (!cancelled) setProjects(data) })
+      .catch(() => { if (!cancelled) setProjects([]) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [currentTeam?.slug])
 
   // Poll while any project is in an active state
   useEffect(() => {

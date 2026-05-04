@@ -84,3 +84,31 @@ export interface ChatMessage {
   content: string
   timestamp?: string
 }
+
+export interface Team {
+  id: string
+  name: string
+  slug: string
+  credits: number
+  role: 'owner' | 'editor' | 'viewer'
+  members_count: number
+}
+
+export interface TeamDetail {
+  id: string
+  name: string
+  slug: string
+  credits: number
+  created_by: string
+  created_at: string
+  members: TeamMemberInfo[]
+}
+
+export interface TeamMemberInfo {
+  id: string
+  user_id: string
+  email: string
+  display_name: string
+  role: 'owner' | 'editor' | 'viewer'
+  joined_at: string
+}

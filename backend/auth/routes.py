@@ -140,6 +140,20 @@ async def get_me(
     }
 
 
+class ValidateCodeRequest(BaseModel):
+    code: str
+
+
+@router.post("/validate-code")
+async def validate_invite_code(data: ValidateCodeRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(InviteCode).where(InviteCode.code == data.code, InviteCode.used_by == None)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Invalid or used invite code")
+    return {"valid": True}
+
+
 class RedeemRequest(BaseModel):
     code: str
 

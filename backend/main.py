@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from sqlalchemy import select
+
 from backend.config import settings, AVAILABLE_MODELS, DEPTH_MODES
 from backend.models.project import (
     Project, ProjectCreate, ProjectStatus, GenerateRequest,
@@ -24,17 +26,29 @@ from backend.services.export import export_service
 from backend.services.llm import llm_client
 from backend.pipeline.orchestrator import orchestrator, AGENTS
 from backend.auth.deps import get_current_user, get_current_user_optional
-from backend.db.models import User as DBUser
+from backend.db.models import User as DBUser, ProjectRecord, Team, TeamMember
 from backend.db.session import init_db, get_db
 from backend.auth.routes import router as auth_router
 from backend.admin.routes import router as admin_router
+from backend.teams.routes import router as teams_router
+
+
+async def _run_alembic_upgrade():
+    from alembic.config import Config
+    from alembic import command
+    import os
+    alembic_ini = os.path.join(os.path.dirname(__file__), "alembic.ini")
+    if os.path.exists(alembic_ini):
+        cfg = Config(alembic_ini)
+        cfg.set_main_option("script_location", os.path.join(os.path.dirname(__file__), "alembic"))
+        command.upgrade(cfg, "head")
+    else:
+        await init_db()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize database tables
-    await init_db()
-    # Create default admin if no users exist
+    await _run_alembic_upgrade()
     await _ensure_admin()
     # Auto-migrate legacy projects on startup
     migrated = await storage.migrate_all_legacy()
@@ -70,6 +84,7 @@ app = FastAPI(title="ScenarioForge", version="2.1.0", lifespan=lifespan)
 
 app.include_router(auth_router)
 app.include_router(admin_router)
+app.include_router(teams_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -80,43 +95,171 @@ app.add_middleware(
 )
 
 
+# --- Access control ---
+
+async def _check_project_access(
+    project_id: str, user: DBUser | None, db: AsyncSession,
+    require_edit: bool = False,
+) -> Project:
+    """Load project from storage, verify user access via ProjectRecord if auth is enabled."""
+    project = await storage.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if user is None:
+        return project
+
+    record = (await db.execute(
+        select(ProjectRecord).where(ProjectRecord.id == project_id)
+    )).scalar_one_or_none()
+    if not record:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if record.team_id is None:
+        if record.user_id != user.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+        return project
+
+    membership = (await db.execute(
+        select(TeamMember).where(
+            TeamMember.team_id == record.team_id,
+            TeamMember.user_id == user.id,
+        )
+    )).scalar_one_or_none()
+    if not membership:
+        raise HTTPException(status_code=403, detail="Access denied")
+    if require_edit and membership.role == "viewer":
+        raise HTTPException(status_code=403, detail="View-only access")
+
+    return project
+
+
 # --- Projects ---
 
+class ProjectCreateWithTeam(ProjectCreate):
+    team_slug: str | None = None
+
+
 @app.post("/api/projects", response_model=Project)
-async def create_project(data: ProjectCreate):
+async def create_project(
+    data: ProjectCreateWithTeam,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    team_id = None
+    if user is not None and data.team_slug:
+        team = (await db.execute(
+            select(Team).where(Team.slug == data.team_slug)
+        )).scalar_one_or_none()
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+        membership = (await db.execute(
+            select(TeamMember).where(
+                TeamMember.team_id == team.id,
+                TeamMember.user_id == user.id,
+                TeamMember.role.in_(["owner", "editor"]),
+            )
+        )).scalar_one_or_none()
+        if not membership:
+            raise HTTPException(status_code=403, detail="Cannot create projects in this team")
+        team_id = team.id
+
     project = Project(idea=data.idea, type=data.type, equipment=data.equipment)
     await storage.save_project(project)
+    if user is not None:
+        record = ProjectRecord(
+            id=project.id,
+            user_id=user.id,
+            team_id=team_id,
+            idea=data.idea,
+            type=data.type.value if hasattr(data.type, "value") else str(data.type),
+        )
+        db.add(record)
     return project
 
 
 @app.get("/api/projects", response_model=list[Project])
-async def list_projects():
-    return await storage.list_projects()
+async def list_projects(
+    team: str | None = None,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if user is None:
+        return await storage.list_projects()
+
+    if team:
+        team_obj = (await db.execute(
+            select(Team).where(Team.slug == team)
+        )).scalar_one_or_none()
+        if not team_obj:
+            raise HTTPException(status_code=404, detail="Team not found")
+        membership = (await db.execute(
+            select(TeamMember).where(
+                TeamMember.team_id == team_obj.id,
+                TeamMember.user_id == user.id,
+            )
+        )).scalar_one_or_none()
+        if not membership:
+            raise HTTPException(status_code=403, detail="Not a team member")
+        query = select(ProjectRecord.id).where(ProjectRecord.team_id == team_obj.id)
+    else:
+        own = select(ProjectRecord.id).where(
+            ProjectRecord.user_id == user.id,
+            ProjectRecord.team_id == None,
+        )
+        team_ids_q = select(TeamMember.team_id).where(TeamMember.user_id == user.id)
+        team_projects = select(ProjectRecord.id).where(
+            ProjectRecord.team_id.in_(team_ids_q)
+        )
+        query = own.union(team_projects)
+
+    result = await db.execute(query)
+    project_ids = [row[0] for row in result.all()]
+    projects = []
+    for pid in project_ids:
+        p = await storage.get_project(pid)
+        if p:
+            projects.append(p)
+    projects.sort(key=lambda p: p.created_at, reverse=True)
+    return projects
 
 
 @app.get("/api/projects/{project_id}", response_model=Project)
-async def get_project(project_id: str):
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    return project
+async def get_project(
+    project_id: str,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await _check_project_access(project_id, user, db)
 
 
 @app.delete("/api/projects/{project_id}")
-async def delete_project(project_id: str):
+async def delete_project(
+    project_id: str,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _check_project_access(project_id, user, db, require_edit=True)
     deleted = await storage.delete_project(project_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Project not found")
+    if user is not None:
+        record = (await db.execute(
+            select(ProjectRecord).where(ProjectRecord.id == project_id)
+        )).scalar_one_or_none()
+        if record:
+            await db.delete(record)
     return {"status": "deleted"}
 
 
 # --- Pipeline ---
 
 @app.post("/api/projects/{project_id}/brief")
-async def start_briefing(project_id: str):
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+async def start_briefing(
+    project_id: str,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await _check_project_access(project_id, user, db, require_edit=True)
     if project.briefing_questions:
         return {"questions": project.briefing_questions}
     project.status = ProjectStatus.briefing
@@ -129,10 +272,13 @@ async def start_briefing(project_id: str):
 
 
 @app.post("/api/projects/{project_id}/brief/answers")
-async def submit_brief_answers(project_id: str, data: BriefAnswers):
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+async def submit_brief_answers(
+    project_id: str,
+    data: BriefAnswers,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await _check_project_access(project_id, user, db, require_edit=True)
     project.briefing_answers = data.answers
     project.status = ProjectStatus.answers_submitted
     await storage.save_project(project)
@@ -140,21 +286,38 @@ async def submit_brief_answers(project_id: str, data: BriefAnswers):
 
 
 @app.post("/api/projects/{project_id}/generate")
-async def start_generation(project_id: str, data: GenerateRequest, background_tasks: BackgroundTasks,
-                           user: DBUser = Depends(get_current_user_optional),
-                           db: AsyncSession = Depends(get_db)):
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+async def start_generation(
+    project_id: str,
+    data: GenerateRequest,
+    background_tasks: BackgroundTasks,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await _check_project_access(project_id, user, db, require_edit=True)
     if project.status == ProjectStatus.generating:
         raise HTTPException(status_code=409, detail="Generation already in progress")
 
-    # Credit check (if auth enabled and user exists)
     if user is not None:
-        if user.credits <= 0:
-            raise HTTPException(status_code=403, detail="Insufficient credits")
-        user.credits -= 1
-        await db.commit()
+        from backend.services.usage import check_generation_allowed, record_generation
+        allowed, reason = await check_generation_allowed(db, user, data.depth_mode)
+        if not allowed:
+            raise HTTPException(status_code=403, detail=reason)
+
+        record = (await db.execute(
+            select(ProjectRecord).where(ProjectRecord.id == project_id)
+        )).scalar_one_or_none()
+
+        if record and record.team_id:
+            team = await db.get(Team, record.team_id)
+            if not team or team.credits <= 0:
+                raise HTTPException(status_code=403, detail="Insufficient team credits")
+            team.credits -= 1
+        else:
+            if user.credits <= 0:
+                raise HTTPException(status_code=403, detail="Insufficient credits")
+            user.credits -= 1
+
+        await record_generation(db, user.id)
 
     project.depth_mode = data.depth_mode
     project.model_overrides = data.model_overrides
@@ -183,10 +346,12 @@ async def _run_pipeline(project: Project, user_id: str | None = None):
 
 
 @app.get("/api/projects/{project_id}/status")
-async def get_status(project_id: str):
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+async def get_status(
+    project_id: str,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await _check_project_access(project_id, user, db)
     return {
         "status": project.status,
         "current_agent": project.current_agent,
@@ -195,10 +360,12 @@ async def get_status(project_id: str):
 
 
 @app.post("/api/projects/{project_id}/stop")
-async def stop_generation(project_id: str):
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+async def stop_generation(
+    project_id: str,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await _check_project_access(project_id, user, db, require_edit=True)
     orchestrator.stop(project_id)
     project.status = ProjectStatus.stopped
     await storage.save_project(project)
@@ -208,10 +375,13 @@ async def stop_generation(project_id: str):
 # --- Revisions ---
 
 @app.post("/api/projects/{project_id}/revise")
-async def revise_project(project_id: str, data: ReviseRequest):
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+async def revise_project(
+    project_id: str,
+    data: ReviseRequest,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await _check_project_access(project_id, user, db, require_edit=True)
     if not project.scenario:
         raise HTTPException(status_code=400, detail="No scenario to revise")
     result = await orchestrator.revise(project, data.agent, data.instructions, data.scene_number)
@@ -219,11 +389,13 @@ async def revise_project(project_id: str, data: ReviseRequest):
 
 
 @app.put("/api/projects/{project_id}/scenario")
-async def update_scenario(project_id: str, data: ScenarioUpdate):
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    # Save revision before manual edit
+async def update_scenario(
+    project_id: str,
+    data: ScenarioUpdate,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await _check_project_access(project_id, user, db, require_edit=True)
     if project.scenario:
         await storage.save_revision(project.id, project.scenario, source="before-manual-edit")
     project.scenario = data.scenario
@@ -235,21 +407,24 @@ async def update_scenario(project_id: str, data: ScenarioUpdate):
 # --- Agent results ---
 
 @app.get("/api/projects/{project_id}/agents")
-async def list_agent_results(project_id: str):
-    """List all agent intermediate results for a project."""
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+async def list_agent_results(
+    project_id: str,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _check_project_access(project_id, user, db)
     results = await storage.list_agent_results(project_id)
     return {"results": results}
 
 
 @app.get("/api/projects/{project_id}/agents/{agent_name}")
-async def get_agent_result(project_id: str, agent_name: str):
-    """Get a specific agent's last result."""
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+async def get_agent_result(
+    project_id: str,
+    agent_name: str,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _check_project_access(project_id, user, db)
     result = await storage.get_agent_result(project_id, agent_name)
     if not result:
         raise HTTPException(status_code=404, detail="Agent result not found")
@@ -259,21 +434,24 @@ async def get_agent_result(project_id: str, agent_name: str):
 # --- Revision history ---
 
 @app.get("/api/projects/{project_id}/revisions")
-async def list_revisions(project_id: str):
-    """List all scenario revisions."""
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+async def list_revisions(
+    project_id: str,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _check_project_access(project_id, user, db)
     revisions = await storage.list_revisions(project_id)
     return {"revisions": revisions}
 
 
 @app.get("/api/projects/{project_id}/revisions/{filename}")
-async def get_revision(project_id: str, filename: str):
-    """Get a specific revision."""
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+async def get_revision(
+    project_id: str,
+    filename: str,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _check_project_access(project_id, user, db)
     content = await storage.get_revision(project_id, filename)
     if content is None:
         raise HTTPException(status_code=404, detail="Revision not found")
@@ -288,11 +466,14 @@ class ChatMessage(BaseModel):
 
 
 @app.post("/api/projects/{project_id}/chat/{agent_name}")
-async def chat_with_agent(project_id: str, agent_name: str, data: ChatMessage):
-    """Send a message to a specific agent in context of the project."""
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+async def chat_with_agent(
+    project_id: str,
+    agent_name: str,
+    data: ChatMessage,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await _check_project_access(project_id, user, db, require_edit=True)
     if agent_name not in AGENTS:
         raise HTTPException(status_code=400, detail=f"Unknown agent: {agent_name}")
 
@@ -333,21 +514,25 @@ async def chat_with_agent(project_id: str, agent_name: str, data: ChatMessage):
 
 
 @app.get("/api/projects/{project_id}/chat/{agent_name}")
-async def get_chat_history(project_id: str, agent_name: str):
-    """Get chat history with a specific agent."""
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+async def get_chat_history(
+    project_id: str,
+    agent_name: str,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _check_project_access(project_id, user, db)
     history = await storage.get_chat_history(project_id, agent_name)
     return {"messages": history, "agent": agent_name}
 
 
 @app.delete("/api/projects/{project_id}/chat/{agent_name}")
-async def clear_chat_history(project_id: str, agent_name: str):
-    """Clear chat history with a specific agent."""
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+async def clear_chat_history(
+    project_id: str,
+    agent_name: str,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _check_project_access(project_id, user, db)
     await storage.save_chat_history(project_id, agent_name, [])
     return {"status": "cleared"}
 
@@ -361,11 +546,13 @@ class AskRequest(BaseModel):
 
 
 @app.post("/api/projects/{project_id}/ask")
-async def ask_about_fragment(project_id: str, data: AskRequest):
-    """Ask a question about a specific scenario fragment."""
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+async def ask_about_fragment(
+    project_id: str,
+    data: AskRequest,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await _check_project_access(project_id, user, db)
     if data.agent not in AGENTS:
         raise HTTPException(status_code=400, detail=f"Unknown agent: {data.agent}")
 
@@ -381,10 +568,12 @@ async def ask_about_fragment(project_id: str, data: AskRequest):
 # --- Export ---
 
 @app.get("/api/projects/{project_id}/export/md")
-async def export_md(project_id: str):
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+async def export_md(
+    project_id: str,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await _check_project_access(project_id, user, db)
     if not project.scenario:
         raise HTTPException(status_code=400, detail="No scenario to export")
     content = export_service.export_md(project.scenario)
@@ -396,10 +585,12 @@ async def export_md(project_id: str):
 
 
 @app.get("/api/projects/{project_id}/export/pdf")
-async def export_pdf(project_id: str):
-    project = await storage.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+async def export_pdf(
+    project_id: str,
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await _check_project_access(project_id, user, db)
     if not project.scenario:
         raise HTTPException(status_code=400, detail="No scenario to export")
     pdf_bytes = export_service.export_pdf(project.scenario)
@@ -413,8 +604,13 @@ async def export_pdf(project_id: str):
 # --- SSE for real-time updates ---
 
 @app.get("/api/projects/{project_id}/stream")
-async def stream_status(project_id: str):
-    """SSE endpoint for real-time pipeline status updates with agent drafts."""
+async def stream_status(
+    project_id: str,
+    user: DBUser = Depends(get_current_user_optional),
+    db: AsyncSession = Depends(get_db),
+):
+    if user is not None:
+        await _check_project_access(project_id, user, db)
     async def event_generator() -> AsyncGenerator[str, None]:
         prev_status = None
         prev_agent = None
@@ -459,6 +655,19 @@ async def stream_status(project_id: str):
             await asyncio.sleep(1)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+# --- Usage ---
+
+@app.get("/api/usage")
+async def get_usage(
+    user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if user is None:
+        return {"tier": "pro", "generations": 0, "generations_limit": -1}
+    from backend.services.usage import get_usage_stats
+    return await get_usage_stats(db, user.id)
 
 
 # --- Test Models ---
