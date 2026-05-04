@@ -72,6 +72,7 @@ async def register(request: Request, data: RegisterRequest, db: AsyncSession = D
     # Mark invite as used
     invite.used_by = user.id
     invite.used_at = datetime.now(timezone.utc)
+    await db.commit()
 
     db.add(AuditLog(user_id=user.id, action="register", details=f'{{"email":"{user.email}"}}'))
     await db.commit()

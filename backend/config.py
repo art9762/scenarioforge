@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     trinity_aurora_url: str = "https://gate.trinity.tg/aurora/v1"
     trinity_orion_url: str = "https://gate.trinity.tg/orion/v1"
     storage_dir: str = "./data"
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8000
     auth_enabled: bool = False
     jwt_secret: str = "dev-secret-change-me"
