@@ -70,6 +70,7 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
     # Mark invite as used
     invite.used_by = user.id
     invite.used_at = datetime.now(timezone.utc)
+    await db.commit()
 
     return TokenResponse(
         access_token=create_access_token(user.id),

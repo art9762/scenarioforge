@@ -39,7 +39,7 @@ export default function Generation() {
       setStatus(s)
       if (s.status === 'generating') {
         setPhase('running')
-      } else if (s.status === 'completed' || s.status === 'done') {
+      } else if (s.status === 'completed') {
         navigate(`/projects/${id}/scenario`, { replace: true })
       } else if (s.status === 'error') {
         setPhase('error')
@@ -69,7 +69,7 @@ export default function Generation() {
           setDraftPreview(data.draft_preview)
         }
 
-        if (data.status === 'done' || data.status === 'completed') {
+        if (data.status === 'completed') {
           es.close()
           setTimeout(() => navigate(`/projects/${id}/scenario`), 1000)
         } else if (data.status === 'error') {
@@ -92,7 +92,7 @@ export default function Generation() {
       const poll = () => {
         api.getStatus(id).then((s) => {
           setStatus(s)
-          if (s.status === 'done' || s.status === 'completed') {
+          if (s.status === 'completed') {
             setTimeout(() => navigate(`/projects/${id}/scenario`), 1000)
           } else if (s.status === 'error' || s.status === 'stopped') {
             setPhase('error')
@@ -289,7 +289,7 @@ export default function Generation() {
         </button>
       </div>
 
-      {(status.status === 'done' || status.status === 'completed') && (
+      {status.status === 'completed' && (
         <p className="text-center text-success mt-6 font-medium">Готово! Переход к сценарию...</p>
       )}
     </div>

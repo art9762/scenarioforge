@@ -81,8 +81,8 @@ export const api = {
   getScenario: (id: string) => request<Scenario>(`/projects/${id}`),
   updateScenario: (id: string, scenario: string) =>
     request<void>(`/projects/${id}/scenario`, { method: 'PUT', body: JSON.stringify({ scenario }) }),
-  reviseScene: (id: string, sceneId: number, agent: string) =>
-    request<void>(`/projects/${id}/revise`, { method: 'POST', body: JSON.stringify({ scene_number: sceneId, agent }) }),
+  reviseScene: (id: string, sceneId: number, agent: string, instructions: string = '') =>
+    request<void>(`/projects/${id}/revise`, { method: 'POST', body: JSON.stringify({ scene_number: sceneId, agent, instructions }) }),
 
   // Agent results
   listAgentResults: (id: string) => request<{ results: AgentResult[] }>(`/projects/${id}/agents`),

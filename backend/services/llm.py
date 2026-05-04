@@ -1,7 +1,12 @@
+import asyncio
+import logging
+
 import httpx
 from dataclasses import dataclass
 from typing import Optional
 from backend.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -33,6 +38,10 @@ class LLMClient:
         resp = await self.generate_with_usage(model, system_prompt, messages, max_tokens)
         return resp.text
 
+    MAX_RETRIES = 3
+    RETRY_DELAYS = [1.0, 2.0, 4.0]
+    RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
     async def generate_with_usage(
         self,
         model: str,
@@ -40,12 +49,25 @@ class LLMClient:
         messages: list[dict],
         max_tokens: int = 4096,
     ) -> LLMResponse:
-        """Generate text and return usage info."""
+        """Generate text and return usage info with retry on transient errors."""
         provider = self._get_provider(model)
-        if provider == "aurora":
-            return await self._call_aurora(model, system_prompt, messages, max_tokens)
-        else:
-            return await self._call_orion(model, system_prompt, messages, max_tokens)
+        call = self._call_aurora if provider == "aurora" else self._call_orion
+        last_exc: Exception | None = None
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                return await call(model, system_prompt, messages, max_tokens)
+            except httpx.HTTPStatusError as e:
+                last_exc = e
+                if e.response.status_code not in self.RETRYABLE_STATUS_CODES:
+                    raise
+                logger.warning("LLM request failed (attempt %d/%d, status %d), retrying in %ss",
+                               attempt + 1, self.MAX_RETRIES, e.response.status_code, self.RETRY_DELAYS[attempt])
+            except (httpx.TimeoutException, httpx.ConnectError) as e:
+                last_exc = e
+                logger.warning("LLM request failed (attempt %d/%d, %s), retrying in %ss",
+                               attempt + 1, self.MAX_RETRIES, type(e).__name__, self.RETRY_DELAYS[attempt])
+            await asyncio.sleep(self.RETRY_DELAYS[attempt])
+        raise last_exc  # type: ignore[misc]
 
     async def _call_aurora(
         self, model: str, system_prompt: str, messages: list[dict], max_tokens: int
