@@ -1,0 +1,15 @@
+{
+  "id": "session-1777893027323",
+  "startedAt": "2026-05-04T11:10:27.323Z",
+  "cwd": "/Users/artem/Documents/scenarioforge",
+  "context": {},
+  "metrics": {
+    "edits": 84,
+    "commands": 0,
+    "tasks": 0,
+    "errors": 0
+  },
+  "restoredAt": "2026-05-04T12:11:55.551Z",
+  "endedAt": "2026-05-04T12:31:56.802Z",
+  "duration": 4889479
+}
