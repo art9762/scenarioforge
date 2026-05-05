@@ -28,7 +28,7 @@ AVAILABLE_MODELS = [
     {"id": "claude-haiku-4-5", "provider": "aurora", "name": "Claude Haiku 4.5"},
     {"id": "claude-sonnet-4-6", "provider": "aurora", "name": "Claude Sonnet 4.6"},
     {"id": "claude-opus-4-6", "provider": "aurora", "name": "Claude Opus 4.6"},
-    {"id": "gpt-5.2", "provider": "orion", "name": "GPT 5.2"},
+    {"id": "gpt-5.5", "provider": "orion", "name": "GPT 5.5"},
 ]
 
 DEPTH_MODES = {
