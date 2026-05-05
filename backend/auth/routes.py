@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.jwt import create_access_token, create_refresh_token, verify_token
-from backend.auth.deps import get_current_user
+from backend.auth.deps import get_current_user, get_current_user_optional
 from backend.auth.limiter import limiter
 from backend.auth.passwords import hash_password, verify_password
 from backend.db.models import User, InviteCode, CreditCode, AuditLog
@@ -132,11 +132,12 @@ async def refresh(data: RefreshRequest, db: AsyncSession = Depends(get_db)):
 
 @router.get("/me")
 async def get_me(
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_optional),
 ):
     """Get current authenticated user info."""
+    from backend.config import settings as _settings
     if user is None:
-        return {"user": None, "auth_enabled": False}
+        return {"user": None, "auth_enabled": _settings.auth_enabled}
     return {
         "user_id": user.id,
         "email": user.email,

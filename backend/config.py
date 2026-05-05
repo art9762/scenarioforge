@@ -12,10 +12,10 @@ class Settings(BaseSettings):
     storage_dir: str = "./data"
     host: str = "127.0.0.1"
     port: int = 8000
-    auth_enabled: bool = False
+    auth_enabled: bool = True
     jwt_secret: str = "dev-secret-change-me"
     database_url: str = "sqlite+aiosqlite:///./data/scenarioforge.db"
-    admin_email: str = "admin@scenarioforge.local"
+    admin_email: str = "admin@scenarioforge.app"
     admin_password: str = "admin"
     allowed_origins: str = "*"
 
