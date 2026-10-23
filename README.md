@@ -97,6 +97,20 @@ npm run dev
 
 The API will be available at `http://localhost:8000` and the UI at `http://localhost:5173`.
 
+### Frontend checks
+
+```bash
+cd frontend
+npm ci
+npm test
+npm run lint
+npm run build
+```
+
+The export buttons download Markdown and PDF using the signed-in session, including
+automatic token refresh. Download failures are shown on the scenario page.
+The frontend tests use Node's built-in test runner and the existing TypeScript compiler.
+
 ---
 
 ## API Endpoints
