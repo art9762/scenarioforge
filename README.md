@@ -97,6 +97,44 @@ npm run dev
 
 The API will be available at `http://localhost:8000` and the UI at `http://localhost:5173`.
 
+### Frontend checks
+
+```bash
+cd frontend
+npm ci
+npm test
+npm run lint
+npm run build
+```
+
+The export buttons download Markdown and PDF using the signed-in session, including
+automatic token refresh. Download failures are shown on the scenario page.
+The frontend tests use Node's built-in test runner and the existing TypeScript compiler.
+
+### Backend checks
+
+Install the development requirements, which include the compatible pytest and
+pytest-asyncio versions used by CI:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r backend/requirements-dev.txt
+.venv/bin/python -m pip check
+.venv/bin/python -m pytest backend/tests -q
+```
+
+The suite uses temporary project storage and an in-memory SQLite database. API
+tests authenticate their requests; anonymous `/api/auth/me` only reports whether
+authentication is enabled, while protected project endpoints require a valid token.
+PDF export tests render a real document and require Pango and fonts. On Ubuntu:
+
+```bash
+sudo apt-get install libpango-1.0-0 libpangoft2-1.0-0 fonts-dejavu-core
+```
+
+On Apple Silicon macOS, install Pango with Homebrew and run the tests with
+`DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` if its libraries are not found.
+
 ---
 
 ## API Endpoints

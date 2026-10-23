@@ -1,119 +1,106 @@
 import pytest
+import pytest_asyncio
 from unittest.mock import AsyncMock, patch
-from httpx import AsyncClient, ASGITransport
-from backend.main import app
-from backend.models.project import Project, ProjectType, Equipment, ProjectStatus
+from tests.conftest import auth_header
 
 
-@pytest.fixture
-def sample_project():
-    return Project(
-        id="test-123",
-        idea="Test idea",
-        type=ProjectType.youtube,
-        equipment=Equipment(camera="Canon R5"),
-        status=ProjectStatus.completed,
-        scenario="# Test Scenario\n\nHello world",
+@pytest_asyncio.fixture
+async def sample_project(client, auth_enabled, token_a):
+    response = await client.post(
+        "/api/projects",
+        json={"idea": "Test idea", "type": "youtube", "equipment": {"camera": "Canon R5"}},
+        headers=auth_header(token_a),
     )
+    assert response.status_code == 200
+    project = response.json()
+    project["scenario"] = "# Test Scenario\n\nHello world"
+    response = await client.put(
+        f"/api/projects/{project['id']}/scenario",
+        json={"scenario": project["scenario"]},
+        headers=auth_header(token_a),
+    )
+    assert response.status_code == 200
+    return project
 
 
 @pytest.mark.asyncio
-async def test_create_project():
-    with patch("backend.main.storage") as mock_storage:
-        mock_storage.save_project = AsyncMock()
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post("/api/projects", json={
-                "idea": "Test",
-                "type": "youtube",
-                "equipment": {"camera": "Sony"},
-            })
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["idea"] == "Test"
-            assert data["type"] == "youtube"
+async def test_create_project(client, auth_enabled, token_a):
+    resp = await client.post("/api/projects", json={
+        "idea": "Test",
+        "type": "youtube",
+        "equipment": {"camera": "Sony"},
+    }, headers=auth_header(token_a))
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["idea"] == "Test"
+    assert data["type"] == "youtube"
+    assert data["equipment"]["camera"] == "Sony"
+    saved = await client.get(f"/api/projects/{data['id']}", headers=auth_header(token_a))
+    assert saved.status_code == 200
+    assert saved.json() == data
 
 
 @pytest.mark.asyncio
-async def test_get_project(sample_project):
-    with patch("backend.main.storage") as mock_storage:
-        mock_storage.get_project = AsyncMock(return_value=sample_project)
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/projects/test-123")
-            assert resp.status_code == 200
-            assert resp.json()["id"] == "test-123"
+async def test_get_project(client, sample_project, token_a):
+    resp = await client.get(f"/api/projects/{sample_project['id']}", headers=auth_header(token_a))
+    assert resp.status_code == 200
+    assert resp.json() == sample_project
 
 
 @pytest.mark.asyncio
-async def test_get_project_not_found():
-    with patch("backend.main.storage") as mock_storage:
-        mock_storage.get_project = AsyncMock(return_value=None)
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/projects/nonexistent")
-            assert resp.status_code == 404
+async def test_get_project_not_found(client, auth_enabled, token_a):
+    resp = await client.get("/api/projects/nonexistent", headers=auth_header(token_a))
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "Project not found"}
 
 
 @pytest.mark.asyncio
-async def test_export_md(sample_project):
-    with patch("backend.main.storage") as mock_storage:
-        mock_storage.get_project = AsyncMock(return_value=sample_project)
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/projects/test-123/export/md")
-            assert resp.status_code == 200
-            assert "Test Scenario" in resp.text
+async def test_export_md(client, sample_project, token_a):
+    resp = await client.get(f"/api/projects/{sample_project['id']}/export/md", headers=auth_header(token_a))
+    assert resp.status_code == 200
+    assert resp.text == sample_project["scenario"]
 
 
 @pytest.mark.asyncio
-async def test_get_models():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/config/models")
-        assert resp.status_code == 200
-        models = resp.json()
-        assert len(models) >= 3
+async def test_get_models(client):
+    resp = await client.get("/api/config/models")
+    assert resp.status_code == 200
+    models = resp.json()
+    assert len(models) >= 3
 
 
 @pytest.mark.asyncio
-async def test_get_depth_modes():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/config/depth-modes")
-        assert resp.status_code == 200
-        modes = resp.json()
-        assert "fast" in modes
-        assert "standard" in modes
-        assert "deep" in modes
+async def test_get_depth_modes(client):
+    resp = await client.get("/api/config/depth-modes")
+    assert resp.status_code == 200
+    modes = resp.json()
+    assert "fast" in modes
+    assert "standard" in modes
+    assert "deep" in modes
 
 
 @pytest.mark.asyncio
-async def test_test_models():
+async def test_test_models(client):
     with patch("backend.main.llm_client") as mock_llm:
         mock_llm.generate = AsyncMock(return_value="OK")
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post("/api/test/models")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert "results" in data
-            assert len(data["results"]) >= 3
-            for r in data["results"]:
-                assert r["ok"] is True
-                assert r["latency"] >= 0
-                assert "model" in r
+        resp = await client.post("/api/test/models")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "results" in data
+        assert len(data["results"]) >= 3
+        for r in data["results"]:
+            assert r["ok"] is True
+            assert r["latency"] >= 0
+            assert "model" in r
 
 
 @pytest.mark.asyncio
-async def test_test_models_failure():
+async def test_test_models_failure(client):
     with patch("backend.main.llm_client") as mock_llm:
         mock_llm.generate = AsyncMock(side_effect=Exception("Connection refused"))
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post("/api/test/models")
-            assert resp.status_code == 200
-            data = resp.json()
-            for r in data["results"]:
-                assert r["ok"] is False
-                assert "Connection refused" in r["error"]
+        resp = await client.post("/api/test/models")
+        assert resp.status_code == 200
+        data = resp.json()
+        for r in data["results"]:
+            assert r["ok"] is False
+            assert "Connection refused" in r["error"]

@@ -26,9 +26,26 @@ async def test_me_returns_user_info(client, auth_enabled, token_a, user_a):
 
 
 @pytest.mark.asyncio
-async def test_me_returns_401_without_token(client, auth_enabled):
+async def test_me_exposes_auth_state_without_user_info(client, auth_enabled):
+    # The login screen must discover whether authentication is enabled.
     resp = await client.get("/api/auth/me")
-    assert resp.status_code == 401
+    assert resp.status_code == 200
+    assert resp.json() == {"user": None, "auth_enabled": True}
+
+
+@pytest.mark.asyncio
+async def test_me_does_not_identify_invalid_token(client, auth_enabled):
+    resp = await client.get("/api/auth/me", headers=auth_header("invalid-token"))
+    assert resp.status_code == 200
+    assert resp.json() == {"user": None, "auth_enabled": True}
+
+
+@pytest.mark.asyncio
+async def test_me_reports_auth_disabled(client, monkeypatch):
+    monkeypatch.setattr("backend.config.settings.auth_enabled", False)
+    resp = await client.get("/api/auth/me")
+    assert resp.status_code == 200
+    assert resp.json() == {"user": None, "auth_enabled": False}
 
 
 @pytest.mark.asyncio

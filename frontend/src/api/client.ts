@@ -92,7 +92,7 @@ async function tryRefreshToken(): Promise<boolean> {
   }
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+async function requestResponse(path: string, options?: RequestInit): Promise<Response> {
   const res = await fetch(`${BASE}${path}`, {
     headers: getAuthHeaders(),
     ...options,
@@ -109,7 +109,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
         ...options,
       })
       if (!retry.ok) throw new Error(`API error: ${retry.status}`)
-      return retry.json()
+      return retry
     }
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
@@ -117,7 +117,42 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error('Session expired')
   }
   if (!res.ok) throw new Error(`API error: ${res.status}`)
+  return res
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await requestResponse(path, options)
   return res.json()
+}
+
+function downloadFilename(disposition: string | null, fallback: string): string {
+  if (!disposition) return fallback
+
+  let filename = ''
+  const encoded = /\bfilename\*\s*=\s*UTF-8'[^']*'([^;]+)/i.exec(disposition)
+  if (encoded) {
+    try {
+      filename = decodeURIComponent(encoded[1].trim())
+    } catch {
+      // Invalid encoding: use the plain filename or the default name.
+    }
+  }
+  if (!filename) {
+    const plain = /\bfilename\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^;]+))/i.exec(disposition)
+    filename = plain?.[1]?.replace(/\\(.)/g, '$1') || plain?.[2]?.trim() || ''
+  }
+
+  // A server-provided name is a filename, never a directory path.
+  const basename = filename.split(/[\\/]/).pop()?.trim()
+  return basename && basename !== '.' && basename !== '..' ? basename : fallback
+}
+
+async function requestDownload(path: string, fallback: string) {
+  const res = await requestResponse(path)
+  return {
+    blob: await res.blob(),
+    filename: downloadFilename(res.headers.get('Content-Disposition'), fallback),
+  }
 }
 
 export const api = {
@@ -171,8 +206,8 @@ export const api = {
     }),
 
   // Export
-  exportMd: (id: string) => `${BASE}/projects/${id}/export/md`,
-  exportPdf: (id: string) => `${BASE}/projects/${id}/export/pdf`,
+  exportMd: (id: string) => requestDownload(`/projects/${id}/export/md`, `scenario_${id}.md`),
+  exportPdf: (id: string) => requestDownload(`/projects/${id}/export/pdf`, `scenario_${id}.pdf`),
 
   // Config
   getModels: () => request<{ id: string; provider: string; name: string }[]>('/config/models'),
