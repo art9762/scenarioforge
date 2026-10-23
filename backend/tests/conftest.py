@@ -1,3 +1,5 @@
+from collections import OrderedDict
+
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -9,6 +11,21 @@ from backend.auth.jwt import create_access_token
 
 
 TEST_DATABASE_URL = "sqlite+aiosqlite://"
+
+
+@pytest.fixture(autouse=True)
+def isolated_project_storage(tmp_path, monkeypatch):
+    """Keep every test, including subprocess imports, away from application data."""
+    from backend.config import settings
+    from backend.services.storage import storage
+
+    project_dir = str(tmp_path / "projects")
+    monkeypatch.setenv("STORAGE_DIR", project_dir)
+    monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
+    monkeypatch.setattr(settings, "storage_dir", project_dir)
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    monkeypatch.setattr(storage, "_base_dir", project_dir)
+    monkeypatch.setattr(storage, "_locks", OrderedDict())
 
 
 def auth_header(token: str) -> dict:
