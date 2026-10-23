@@ -93,16 +93,19 @@ async function tryRefreshToken(): Promise<boolean> {
 }
 
 async function requestResponse(path: string, options?: RequestInit): Promise<Response> {
+  options?.signal?.throwIfAborted()
   const res = await fetch(`${BASE}${path}`, {
     headers: getAuthHeaders(),
     ...options,
   })
   if (res.status === 401 && !path.includes('/auth/')) {
+    options?.signal?.throwIfAborted()
     if (!isRefreshing) {
       isRefreshing = true
       refreshPromise = tryRefreshToken().finally(() => { isRefreshing = false })
     }
-    const refreshed = await refreshPromise
+    const refreshed = await withAbort(refreshPromise!, options?.signal)
+    options?.signal?.throwIfAborted()
     if (refreshed) {
       const retry = await fetch(`${BASE}${path}`, {
         headers: getAuthHeaders(),
@@ -118,6 +121,22 @@ async function requestResponse(path: string, options?: RequestInit): Promise<Res
   }
   if (!res.ok) throw new Error(`API error: ${res.status}`)
   return res
+}
+
+function withAbort<T>(promise: Promise<T>, signal?: AbortSignal | null): Promise<T> {
+  if (!signal) return promise
+  signal.throwIfAborted()
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason)
+    signal.addEventListener('abort', abort, { once: true })
+    promise.then((value) => {
+      signal.removeEventListener('abort', abort)
+      resolve(value)
+    }, (error) => {
+      signal.removeEventListener('abort', abort)
+      reject(error)
+    })
+  })
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -155,6 +174,60 @@ async function requestDownload(path: string, fallback: string) {
   }
 }
 
+async function streamStatus(id: string, onStatus: (status: PipelineStatus) => void, signal: AbortSignal): Promise<void> {
+  const res = await requestResponse(`/projects/${id}/stream`, { signal })
+  signal.throwIfAborted()
+  if (res.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== 'text/event-stream' || !res.body) {
+    throw new Error('Status stream is unavailable')
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let data: string[] = []
+  const abort = () => { void reader.cancel().catch(() => {}) }
+  signal.addEventListener('abort', abort, { once: true })
+
+  const consume = (finished = false) => {
+    while (true) {
+      const end = buffer.search(/[\r\n]/)
+      if (end < 0 || (!finished && buffer[end] === '\r' && end === buffer.length - 1)) return
+      const line = buffer.slice(0, end)
+      const separator = buffer[end] === '\r' && buffer[end + 1] === '\n' ? 2 : 1
+      buffer = buffer.slice(end + separator)
+      if (line === '') {
+        if (data.length) {
+          const event = data.join('\n')
+          data = []
+          if (!signal.aborted) onStatus(JSON.parse(event) as PipelineStatus)
+        }
+      } else if (!line.startsWith(':')) {
+        const colon = line.indexOf(':')
+        const field = colon < 0 ? line : line.slice(0, colon)
+        if (field === 'data') {
+          const value = colon < 0 ? '' : line.slice(colon + 1)
+          data.push(value.startsWith(' ') ? value.slice(1) : value)
+        }
+      }
+    }
+  }
+
+  try {
+    while (!signal.aborted) {
+      const { value, done } = await reader.read()
+      signal.throwIfAborted()
+      buffer += decoder.decode(value, { stream: !done })
+      consume(done)
+      if (done) return
+    }
+    signal.throwIfAborted()
+  } finally {
+    signal.removeEventListener('abort', abort)
+    await reader.cancel().catch(() => {})
+    reader.releaseLock()
+  }
+}
+
 export const api = {
   // Projects
   listProjects: (teamSlug?: string) => request<Project[]>(teamSlug ? `/projects?team=${teamSlug}` : '/projects'),
@@ -167,10 +240,10 @@ export const api = {
   startBriefing: (id: string) => request<{ questions: (string | BriefingQuestion)[] }>(`/projects/${id}/brief`, { method: 'POST' }),
   submitAnswers: (id: string, answers: string[]) =>
     request<void>(`/projects/${id}/brief/answers`, { method: 'POST', body: JSON.stringify({ answers }) }),
-  startGeneration: (id: string, depth: DepthMode, models?: ModelConfig) =>
-    request<void>(`/projects/${id}/generate`, { method: 'POST', body: JSON.stringify({ depth_mode: depth, model_overrides: models || {} }) }),
-  getStatus: (id: string) => request<PipelineStatus>(`/projects/${id}/status`),
-  stopGeneration: (id: string) => request<void>(`/projects/${id}/stop`, { method: 'POST' }),
+  startGeneration: (id: string, depth: DepthMode, models?: ModelConfig, signal?: AbortSignal) =>
+    request<void>(`/projects/${id}/generate`, { method: 'POST', body: JSON.stringify({ depth_mode: depth, model_overrides: models || {} }), signal }),
+  getStatus: (id: string, signal?: AbortSignal) => request<PipelineStatus>(`/projects/${id}/status`, { signal }),
+  stopGeneration: (id: string, signal?: AbortSignal) => request<void>(`/projects/${id}/stop`, { method: 'POST', signal }),
 
   // Scenario
   getScenario: (id: string) => request<Scenario>(`/projects/${id}`),
@@ -271,7 +344,5 @@ export const api = {
     request<{ team_credits: number; added: number }>(`/teams/${slug}/redeem`, { method: 'POST', body: JSON.stringify({ code }) }),
 
   // SSE stream
-  streamStatus: (id: string): EventSource => {
-    return new EventSource(`${BASE}/projects/${id}/stream`)
-  },
+  streamStatus,
 }
