@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
+import { observeGeneration } from '../utils/generation'
 import type { PipelineStatus, DepthMode } from '../types'
 
 const AGENT_LABELS: Record<string, string> = {
@@ -23,6 +24,10 @@ const AGENTS = ['director', 'screenwriter', 'visual_director', 'copywriter', 'ed
 
 export default function Generation() {
   const { id } = useParams<{ id: string }>()
+  return id ? <ProjectGeneration key={id} id={id} /> : null
+}
+
+function ProjectGeneration({ id }: { id: string }) {
   const navigate = useNavigate()
   const [status, setStatus] = useState<PipelineStatus>({ status: 'idle', progress: 0 })
   const [depth, setDepth] = useState<DepthMode>('standard')
@@ -30,12 +35,15 @@ export default function Generation() {
   const [errorMsg, setErrorMsg] = useState('')
   const [draftPreview, setDraftPreview] = useState('')
   const [showDraft, setShowDraft] = useState(false)
-  const eventSourceRef = useRef<EventSource | null>(null)
+  const [starting, setStarting] = useState(false)
+  const requests = useRef<AbortController | null>(null)
 
   // On mount: check current project status
   useEffect(() => {
-    if (!id) return
-    api.getStatus(id).then((s) => {
+    const controller = new AbortController()
+    requests.current = controller
+    api.getStatus(id, controller.signal).then((s) => {
+      if (controller.signal.aborted) return
       setStatus(s)
       if (s.status === 'generating') {
         setPhase('running')
@@ -50,80 +58,62 @@ export default function Generation() {
       } else {
         setPhase('form')
       }
-    }).catch(() => setPhase('form'))
+    }).catch(() => {
+      if (controller.signal.aborted) return
+      setPhase('error')
+      setErrorMsg('Не удалось проверить статус генерации')
+    })
+    return () => {
+      controller.abort()
+      requests.current = null
+    }
   }, [id, navigate])
 
   // SSE connection while running
   useEffect(() => {
-    if (!id || phase !== 'running') return
-
-    const es = api.streamStatus(id)
-    eventSourceRef.current = es
-
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data) as PipelineStatus & { draft_preview?: string }
+    if (phase !== 'running') return
+    const controller = new AbortController()
+    void observeGeneration(api, id, {
+      onStatus(data) {
         setStatus(data)
-
-        if (data.draft_preview) {
-          setDraftPreview(data.draft_preview)
-        }
-
-        if (data.status === 'completed') {
-          es.close()
-          setTimeout(() => navigate(`/projects/${id}/scenario`), 1000)
-        } else if (data.status === 'error') {
-          es.close()
-          setPhase('error')
-          setErrorMsg(data.message || 'Ошибка генерации')
-        } else if (data.status === 'stopped') {
-          es.close()
-          setPhase('error')
-          setErrorMsg('Генерация была остановлена')
-        }
-      } catch {
-        // ignore parse errors
-      }
-    }
-
-    es.onerror = () => {
-      // SSE error — fallback to polling
-      es.close()
-      const poll = () => {
-        api.getStatus(id).then((s) => {
-          setStatus(s)
-          if (s.status === 'completed') {
-            setTimeout(() => navigate(`/projects/${id}/scenario`), 1000)
-          } else if (s.status === 'error' || s.status === 'stopped') {
-            setPhase('error')
-            setErrorMsg(s.message || 'Ошибка')
-          } else {
-            setTimeout(poll, 2000)
-          }
-        }).catch(() => setTimeout(poll, 3000))
-      }
-      poll()
-    }
-
-    return () => {
-      es.close()
-    }
+        if (data.draft_preview !== undefined) setDraftPreview(data.draft_preview)
+      },
+      onComplete() {
+        navigate(`/projects/${id}/scenario`)
+      },
+      onError(data) {
+        setPhase('error')
+        setErrorMsg(data.status === 'stopped' ? 'Генерация была остановлена' : data.message || 'Ошибка генерации')
+      },
+    }, controller.signal).catch(() => {
+      if (controller.signal.aborted) return
+      setPhase('error')
+      setErrorMsg('Не удалось получить статус генерации')
+    })
+    return () => controller.abort()
   }, [id, phase, navigate])
 
   const startGen = async () => {
-    if (!id) return
+    const controller = requests.current
+    if (!controller || starting) return
+    setStarting(true)
     try {
-      await api.startGeneration(id, depth)
-      setPhase('running')
+      await api.startGeneration(id, depth, undefined, controller.signal)
+      if (!controller.signal.aborted) setPhase('running')
     } catch {
-      alert('Ошибка запуска генерации')
+      if (controller.signal.aborted) return
+      setPhase('error')
+      setErrorMsg('Ошибка запуска генерации')
+    } finally {
+      if (!controller.signal.aborted) setStarting(false)
     }
   }
 
   const handleStop = async () => {
-    if (!id) return
+    const controller = requests.current
+    if (!controller) return
     try {
-      await api.stopGeneration(id)
+      await api.stopGeneration(id, controller.signal)
     } catch {
       // ignore
     }
@@ -167,8 +157,8 @@ export default function Generation() {
             ))}
           </div>
         </div>
-        <button onClick={startGen} className="bg-accent text-bg-primary px-8 py-3 rounded font-medium hover:opacity-90">
-          Начать генерацию
+        <button onClick={startGen} disabled={starting} className="bg-accent text-bg-primary px-8 py-3 rounded font-medium hover:opacity-90 disabled:opacity-50">
+          {starting ? 'Запуск...' : 'Начать генерацию'}
         </button>
       </div>
     )

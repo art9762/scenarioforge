@@ -92,24 +92,27 @@ async function tryRefreshToken(): Promise<boolean> {
   }
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+async function requestResponse(path: string, options?: RequestInit): Promise<Response> {
+  options?.signal?.throwIfAborted()
   const res = await fetch(`${BASE}${path}`, {
     headers: getAuthHeaders(),
     ...options,
   })
   if (res.status === 401 && !path.includes('/auth/')) {
+    options?.signal?.throwIfAborted()
     if (!isRefreshing) {
       isRefreshing = true
       refreshPromise = tryRefreshToken().finally(() => { isRefreshing = false })
     }
-    const refreshed = await refreshPromise
+    const refreshed = await withAbort(refreshPromise!, options?.signal)
+    options?.signal?.throwIfAborted()
     if (refreshed) {
       const retry = await fetch(`${BASE}${path}`, {
         headers: getAuthHeaders(),
         ...options,
       })
       if (!retry.ok) throw new Error(`API error: ${retry.status}`)
-      return retry.json()
+      return retry
     }
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
@@ -117,7 +120,112 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error('Session expired')
   }
   if (!res.ok) throw new Error(`API error: ${res.status}`)
+  return res
+}
+
+function withAbort<T>(promise: Promise<T>, signal?: AbortSignal | null): Promise<T> {
+  if (!signal) return promise
+  signal.throwIfAborted()
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason)
+    signal.addEventListener('abort', abort, { once: true })
+    promise.then((value) => {
+      signal.removeEventListener('abort', abort)
+      resolve(value)
+    }, (error) => {
+      signal.removeEventListener('abort', abort)
+      reject(error)
+    })
+  })
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await requestResponse(path, options)
   return res.json()
+}
+
+function downloadFilename(disposition: string | null, fallback: string): string {
+  if (!disposition) return fallback
+
+  let filename = ''
+  const encoded = /\bfilename\*\s*=\s*UTF-8'[^']*'([^;]+)/i.exec(disposition)
+  if (encoded) {
+    try {
+      filename = decodeURIComponent(encoded[1].trim())
+    } catch {
+      // Invalid encoding: use the plain filename or the default name.
+    }
+  }
+  if (!filename) {
+    const plain = /\bfilename\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^;]+))/i.exec(disposition)
+    filename = plain?.[1]?.replace(/\\(.)/g, '$1') || plain?.[2]?.trim() || ''
+  }
+
+  // A server-provided name is a filename, never a directory path.
+  const basename = filename.split(/[\\/]/).pop()?.trim()
+  return basename && basename !== '.' && basename !== '..' ? basename : fallback
+}
+
+async function requestDownload(path: string, fallback: string) {
+  const res = await requestResponse(path)
+  return {
+    blob: await res.blob(),
+    filename: downloadFilename(res.headers.get('Content-Disposition'), fallback),
+  }
+}
+
+async function streamStatus(id: string, onStatus: (status: PipelineStatus) => void, signal: AbortSignal): Promise<void> {
+  const res = await requestResponse(`/projects/${id}/stream`, { signal })
+  signal.throwIfAborted()
+  if (res.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== 'text/event-stream' || !res.body) {
+    throw new Error('Status stream is unavailable')
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let data: string[] = []
+  const abort = () => { void reader.cancel().catch(() => {}) }
+  signal.addEventListener('abort', abort, { once: true })
+
+  const consume = (finished = false) => {
+    while (true) {
+      const end = buffer.search(/[\r\n]/)
+      if (end < 0 || (!finished && buffer[end] === '\r' && end === buffer.length - 1)) return
+      const line = buffer.slice(0, end)
+      const separator = buffer[end] === '\r' && buffer[end + 1] === '\n' ? 2 : 1
+      buffer = buffer.slice(end + separator)
+      if (line === '') {
+        if (data.length) {
+          const event = data.join('\n')
+          data = []
+          if (!signal.aborted) onStatus(JSON.parse(event) as PipelineStatus)
+        }
+      } else if (!line.startsWith(':')) {
+        const colon = line.indexOf(':')
+        const field = colon < 0 ? line : line.slice(0, colon)
+        if (field === 'data') {
+          const value = colon < 0 ? '' : line.slice(colon + 1)
+          data.push(value.startsWith(' ') ? value.slice(1) : value)
+        }
+      }
+    }
+  }
+
+  try {
+    while (!signal.aborted) {
+      const { value, done } = await reader.read()
+      signal.throwIfAborted()
+      buffer += decoder.decode(value, { stream: !done })
+      consume(done)
+      if (done) return
+    }
+    signal.throwIfAborted()
+  } finally {
+    signal.removeEventListener('abort', abort)
+    await reader.cancel().catch(() => {})
+    reader.releaseLock()
+  }
 }
 
 export const api = {
@@ -132,10 +240,10 @@ export const api = {
   startBriefing: (id: string) => request<{ questions: (string | BriefingQuestion)[] }>(`/projects/${id}/brief`, { method: 'POST' }),
   submitAnswers: (id: string, answers: string[]) =>
     request<void>(`/projects/${id}/brief/answers`, { method: 'POST', body: JSON.stringify({ answers }) }),
-  startGeneration: (id: string, depth: DepthMode, models?: ModelConfig) =>
-    request<void>(`/projects/${id}/generate`, { method: 'POST', body: JSON.stringify({ depth_mode: depth, model_overrides: models || {} }) }),
-  getStatus: (id: string) => request<PipelineStatus>(`/projects/${id}/status`),
-  stopGeneration: (id: string) => request<void>(`/projects/${id}/stop`, { method: 'POST' }),
+  startGeneration: (id: string, depth: DepthMode, models?: ModelConfig, signal?: AbortSignal) =>
+    request<void>(`/projects/${id}/generate`, { method: 'POST', body: JSON.stringify({ depth_mode: depth, model_overrides: models || {} }), signal }),
+  getStatus: (id: string, signal?: AbortSignal) => request<PipelineStatus>(`/projects/${id}/status`, { signal }),
+  stopGeneration: (id: string, signal?: AbortSignal) => request<void>(`/projects/${id}/stop`, { method: 'POST', signal }),
 
   // Scenario
   getScenario: (id: string) => request<Scenario>(`/projects/${id}`),
@@ -171,8 +279,8 @@ export const api = {
     }),
 
   // Export
-  exportMd: (id: string) => `${BASE}/projects/${id}/export/md`,
-  exportPdf: (id: string) => `${BASE}/projects/${id}/export/pdf`,
+  exportMd: (id: string) => requestDownload(`/projects/${id}/export/md`, `scenario_${id}.md`),
+  exportPdf: (id: string) => requestDownload(`/projects/${id}/export/pdf`, `scenario_${id}.pdf`),
 
   // Config
   getModels: () => request<{ id: string; provider: string; name: string }[]>('/config/models'),
@@ -236,7 +344,5 @@ export const api = {
     request<{ team_credits: number; added: number }>(`/teams/${slug}/redeem`, { method: 'POST', body: JSON.stringify({ code }) }),
 
   // SSE stream
-  streamStatus: (id: string): EventSource => {
-    return new EventSource(`${BASE}/projects/${id}/stream`)
-  },
+  streamStatus,
 }

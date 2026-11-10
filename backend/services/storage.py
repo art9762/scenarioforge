@@ -9,7 +9,7 @@ Each project stored as:
     agents/        — per-agent intermediate results
       director.json, screenwriter.json, ...
     revisions/     — timestamped scenario versions
-      {timestamp}_{source}.md
+      {timestamp-with-microseconds}--{source}.md
     chats/         — per-agent chat history (for v2 agent chats)
       {agent}.json
 """
@@ -20,7 +20,7 @@ import json
 import os
 import shutil
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import aiofiles
@@ -54,15 +54,20 @@ class StorageService:
 
     # --- Atomic file write ---
 
-    async def _atomic_write(self, path: str, content: str) -> None:
+    async def _atomic_write(self, path: str, content: str, *, replace_existing: bool = True) -> None:
         """Write content to file atomically (write to tmp, then rename)."""
         dir_path = os.path.dirname(path)
         os.makedirs(dir_path, exist_ok=True)
         fd, tmp_path = tempfile.mkstemp(dir=dir_path, suffix=".tmp")
         try:
-            async with aiofiles.open(fd, mode="w", closefd=True) as f:
+            async with aiofiles.open(fd, mode="w", closefd=True, encoding="utf-8") as f:
                 await f.write(content)
-            os.replace(tmp_path, path)
+            if replace_existing:
+                os.replace(tmp_path, path)
+            else:
+                # Publish a complete immutable revision without replacing another writer's file.
+                os.link(tmp_path, path)
+                os.unlink(tmp_path)
         except BaseException:
             try:
                 os.unlink(tmp_path)
@@ -276,16 +281,47 @@ class StorageService:
 
     # --- Revision history ---
 
+    @staticmethod
+    def _revision_timestamp(filename: str) -> Optional[datetime]:
+        if not filename.endswith(".md"):
+            return None
+        name = filename[:-3]
+        if "--" in name:
+            stamp = name.split("--", 1)[0]
+        else:
+            stamp = "_".join(name.split("_", 2)[:2])
+        for fmt in ("%Y%m%d_%H%M%S.%f", "%Y%m%d_%H%M%S"):
+            try:
+                return datetime.strptime(stamp, fmt).replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+        return None
+
     async def save_revision(
         self, project_id: str, scenario: str, source: str = "manual"
     ) -> str:
-        """Save a scenario revision. Returns the revision filename."""
+        """Publish an immutable revision with a strictly increasing project timestamp."""
         rev_dir = os.path.join(self._project_dir(project_id), "revisions")
         os.makedirs(rev_dir, exist_ok=True)
-        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        filename = f"{ts}--{source}.md"
-        await self._atomic_write(os.path.join(rev_dir, filename), scenario)
-        return filename
+        async with self._get_lock(project_id):
+            while True:
+                latest = max(
+                    (stamp for name in os.listdir(rev_dir)
+                     if (stamp := self._revision_timestamp(name)) is not None),
+                    default=None,
+                )
+                now = datetime.now(timezone.utc)
+                if latest is not None and now <= latest:
+                    now = latest + timedelta(microseconds=1)
+                filename = f"{now.strftime('%Y%m%d_%H%M%S.%f')}--{source}.md"
+                try:
+                    await self._atomic_write(
+                        os.path.join(rev_dir, filename), scenario, replace_existing=False,
+                    )
+                except FileExistsError:
+                    # Another process published this timestamp while we were writing.
+                    continue
+                return filename
 
     async def list_revisions(self, project_id: str) -> list[dict]:
         """List all revisions for a project."""
@@ -293,10 +329,17 @@ class StorageService:
         if not os.path.isdir(rev_dir):
             return []
         revisions = []
-        for fname in sorted(os.listdir(rev_dir), reverse=True):
+        filenames = sorted(
+            os.listdir(rev_dir),
+            key=lambda name: (
+                self._revision_timestamp(name) or datetime.min.replace(tzinfo=timezone.utc), name,
+            ),
+            reverse=True,
+        )
+        for fname in filenames:
             if fname.endswith(".md"):
                 name = fname[:-3]
-                # New format: {date}_{time}--{source}.md
+                # Current format includes microseconds; older second-precision names still work.
                 if "--" in name:
                     ts_part, source = name.split("--", 1)
                     ts_parts = ts_part.split("_", 1)

@@ -6,6 +6,7 @@ import Spinner from '../components/Spinner'
 import TextSelectionMenu from '../components/TextSelectionMenu'
 import InlineChat from '../components/InlineChat'
 import { normalizeScenarioResponse } from '../utils/scenario'
+import { saveDownload } from '../utils/download'
 
 export default function ScenarioView() {
   const { id } = useParams<{ id: string }>()
@@ -16,6 +17,8 @@ export default function ScenarioView() {
   const [showRevisions, setShowRevisions] = useState(false)
   const [revisionContent, setRevisionContent] = useState<string | null>(null)
   const [showRevisionDiff, setShowRevisionDiff] = useState(false)
+  const [exporting, setExporting] = useState<'md' | 'pdf' | null>(null)
+  const [exportError, setExportError] = useState('')
 
   // Inline chat state
   const [chatVisible, setChatVisible] = useState(false)
@@ -84,6 +87,20 @@ export default function ScenarioView() {
     }
   }
 
+  const handleExport = async (format: 'md' | 'pdf') => {
+    if (!id || exporting) return
+    setExporting(format)
+    setExportError('')
+    try {
+      const { blob, filename } = await (format === 'md' ? api.exportMd(id) : api.exportPdf(id))
+      saveDownload(blob, filename)
+    } catch {
+      setExportError('Не удалось скачать сценарий. Попробуйте снова.')
+    } finally {
+      setExporting(null)
+    }
+  }
+
   if (loading) return <Spinner label="Загрузка сценария..." />
   if (!scenario) return <p className="text-text-secondary">Сценарий не найден</p>
 
@@ -123,14 +140,24 @@ export default function ScenarioView() {
           <Link to={`/projects/${id}/edit`} className="px-3 py-2 border border-bg-tertiary rounded text-sm text-text-secondary hover:border-accent no-underline">
             Редактировать
           </Link>
-          <a href={api.exportMd(id!)} className="px-3 py-2 border border-bg-tertiary rounded text-sm text-text-secondary hover:border-accent no-underline">
-            MD
-          </a>
-          <a href={api.exportPdf(id!)} className="px-3 py-2 border border-bg-tertiary rounded text-sm text-text-secondary hover:border-accent no-underline">
-            PDF
-          </a>
+          <button
+            onClick={() => handleExport('md')}
+            disabled={exporting !== null}
+            className="px-3 py-2 border border-bg-tertiary rounded text-sm text-text-secondary hover:border-accent disabled:opacity-50 disabled:cursor-wait"
+          >
+            {exporting === 'md' ? 'MD…' : 'MD'}
+          </button>
+          <button
+            onClick={() => handleExport('pdf')}
+            disabled={exporting !== null}
+            className="px-3 py-2 border border-bg-tertiary rounded text-sm text-text-secondary hover:border-accent disabled:opacity-50 disabled:cursor-wait"
+          >
+            {exporting === 'pdf' ? 'PDF…' : 'PDF'}
+          </button>
         </div>
       </div>
+
+      {exportError && <p role="alert" className="text-danger text-sm mb-4">{exportError}</p>}
 
       {/* Revision history dropdown */}
       {showRevisions && (

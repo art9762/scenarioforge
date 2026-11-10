@@ -1,4 +1,3 @@
-import pytest
 from backend.services.export import export_service
 
 
@@ -9,15 +8,8 @@ def test_export_md():
 
 
 def test_export_pdf():
-    """Test PDF export - skipped if WeasyPrint system deps not available."""
-    try:
-        from weasyprint import HTML
-    except OSError:
-        pytest.skip("WeasyPrint system dependencies (pango) not installed")
+    """Render a real PDF; missing native libraries and render errors must fail CI."""
     scenario = "# Test Scenario\n\n## Scene 1\n\nHello world"
-    try:
-        pdf_bytes = export_service.export_pdf(scenario)
-    except Exception as e:
-        pytest.skip(f"WeasyPrint render error (system/version issue): {e}")
+    pdf_bytes = export_service.export_pdf(scenario)
     assert pdf_bytes[:4] == b"%PDF"
     assert len(pdf_bytes) > 100
